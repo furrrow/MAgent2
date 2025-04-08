@@ -7,10 +7,14 @@ import os
 import platform
 
 
-def _load_lib():
-    """Load library in local."""
+def _load_lib(magent_path=None):
+    """Load library in local.
+    manually setting the path
+    """
     cur_path = os.path.dirname(os.path.abspath(os.path.expanduser(__file__)))
     lib_path = os.path.join(cur_path, "..", "venv", "Lib", "site-packages", "magent2")
+    if magent_path is not None:
+        lib_path = magent_path
     if platform.system() == "Darwin":
         path_to_so_file = os.path.join(lib_path, "libmagent.dylib")
     elif platform.system() == "Linux":
@@ -44,4 +48,4 @@ def as_bool_c_array(buf):
 
 if "OMP_NUM_THREADS" not in os.environ:
     os.environ["OMP_NUM_THREADS"] = str(multiprocessing.cpu_count() // 2)
-_LIB = _load_lib()
+_LIB = _load_lib(magent_path="/home/jim/miniconda3/envs/magent/lib/python3.8/site-packages/magent2")
