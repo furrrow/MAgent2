@@ -225,34 +225,44 @@ class _parallel_env(magent_parallel_env, EzPickle):
             render_mode,
         )
 
+    def get_block_obstacles(self, x0, x1, y0, y1):
+        top = [[x, y0] for x in range(x0, x1)]
+        bot = [[x, y1] for x in range(x0, x1)]
+        left = [[x0, y] for y in range(y0, y1)]
+        right = [[x1, y] for y in range(y0, y1+1)]
+        return top + bot + left + right
+
     def generate_map(self):
         env, map_size, handles = self.env, self.map_size, self.handles
         """ generate a map, which consists of two squares of agents"""
-        width = height = map_size
-        init_num = map_size * map_size * 0.04
-        gap = 3
+        # width = height = map_size
+        # init_num = map_size * map_size * 0.04
 
-        width = map_size
-        height = map_size
+        width = map_size # 80
+        height = int(map_size * 3/4)  # 60
 
-        init_num = 20
-
-        gap = 3
+        l_gap = 20
+        r_gap = 1
         leftID, rightID = 0, 1
 
         # left
         pos = []
-        for y in range(10, 45):
+        pos += self.get_block_obstacles(10, 15, 10, 15)
+        pos += self.get_block_obstacles(10, 15, 45, 50)
+        pos += self.get_block_obstacles(25, 30, 25, 45)
+        pos += self.get_block_obstacles(50, 55, 5, 25)
+        for y in range(1, 45):
             pos.append((width / 2 - 5, y))
             pos.append((width / 2 - 4, y))
-        for y in range(50, height // 2 + 25):
+        for y in range(50, height-1):
             pos.append((width / 2 - 5, y))
             pos.append((width / 2 - 4, y))
 
-        for y in range(height // 2 - 25, height - 50):
+        for y in range(height // 2 - 25, height - 1):
             pos.append((width / 2 + 5, y))
             pos.append((width / 2 + 4, y))
-        for y in range(height - 45, height - 10):
+
+        for y in range(height - 45, height - 1):
             pos.append((width / 2 + 5, y))
             pos.append((width / 2 + 4, y))
 
@@ -261,10 +271,10 @@ class _parallel_env(magent_parallel_env, EzPickle):
                 assert False
         env.add_walls(pos=pos, method="custom")
 
-        n = init_num
-        side = int(math.sqrt(n)) * 2
+        n_l = 16
+        side = int(math.sqrt(n_l)) * 2
         pos = []
-        for x in range(width // 2 - gap - side, width // 2 - gap - side + side, 2):
+        for x in range(width // 2 - l_gap - side, width // 2 - l_gap - side + side, 2):
             for y in range((height - side) // 2, (height - side) // 2 + side, 2):
                 pos.append([x, y, 0])
 
@@ -274,10 +284,10 @@ class _parallel_env(magent_parallel_env, EzPickle):
         env.add_agents(handles[leftID], method="custom", pos=pos)
 
         # right
-        n = init_num
-        side = int(math.sqrt(n)) * 2
+        n_r = 4
+        side = int(math.sqrt(n_r)) * 2
         pos = []
-        for x in range(width // 2 + gap, width // 2 + gap + side, 2):
+        for x in range(width // 2 + r_gap, width // 2 + r_gap + side, 2):
             for y in range((height - side) // 2, (height - side) // 2 + side, 2):
                 pos.append([x, y, 0])
 
