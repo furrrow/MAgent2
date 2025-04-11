@@ -240,38 +240,38 @@ class _parallel_env(magent_parallel_env, EzPickle):
 
         width = map_size # 80
         height = int(map_size * 3/4)  # 60
-
-        l_gap = 20
-        r_gap = 1
+        # width // 2 + gap
+        l_gap = 30
+        r_gap = 30
         leftID, rightID = 0, 1
 
         # left
         pos = []
-        pos += self.get_block_obstacles(10, 15, 10, 15)
-        pos += self.get_block_obstacles(10, 15, 45, 50)
-        pos += self.get_block_obstacles(25, 30, 25, 45)
-        pos += self.get_block_obstacles(50, 55, 15, 45)
-        for y in range(1, 45):
-            pos.append((width / 2 - 5, y))
-            pos.append((width / 2 - 4, y))
-        for y in range(50, height-1):
-            pos.append((width / 2 - 5, y))
-            pos.append((width / 2 - 4, y))
-
-        for y in range(1 , 27):  # 1 -> 30
-            pos.append((width / 2 + 7, y))
-            pos.append((width / 2 + 6, y))
-
-        for y in range(32                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      , height - 1): # 35 -> 59
-            pos.append((width / 2 + 7, y))
-            pos.append((width / 2 + 6, y))
+        # pos += self.get_block_obstacles(10, 15, 10, 15)
+        # pos += self.get_block_obstacles(10, 15, 45, 50)
+        # pos += self.get_block_obstacles(25, 30, 25, 45)
+        # pos += self.get_block_obstacles(50, 55, 5, 25)
+        # for y in range(1, 45):
+        #     pos.append((width / 2 - 5, y))
+        #     pos.append((width / 2 - 4, y))
+        # for y in range(50, height-1):
+        #     pos.append((width / 2 - 5, y))
+        #     pos.append((width / 2 - 4, y))
+        #
+        # for y in range(height // 2 - 25, height - 1):
+        #     pos.append((width / 2 + 5, y))
+        #     pos.append((width / 2 + 4, y))
+        #
+        # for y in range(height - 45, height - 1):
+        #     pos.append((width / 2 + 5, y))
+        #     pos.append((width / 2 + 4, y))
 
         for x, y in pos:
             if not (0 < x < width - 1 and 0 < y < height - 1):
                 assert False
         env.add_walls(pos=pos, method="custom")
 
-        n_l = 16
+        n_l = 2
         side = int(math.sqrt(n_l)) * 2
         pos = []
         for x in range(width // 2 - l_gap - side, width // 2 - l_gap - side + side, 2):
@@ -284,7 +284,7 @@ class _parallel_env(magent_parallel_env, EzPickle):
         env.add_agents(handles[leftID], method="custom", pos=pos)
 
         # right
-        n_r = 4
+        n_r = 1
         side = int(math.sqrt(n_r)) * 2
         pos = []
         for x in range(width // 2 + r_gap, width // 2 + r_gap + side, 2):
