@@ -49,3 +49,7 @@ class GCNConv(MessagePassing):
 
         # Step 4: Normalize node features.
         return norm.view(-1, 1) * x_j
+
+
+conv = GCNConv(16, 32)
+x = conv(x, edge_index)
