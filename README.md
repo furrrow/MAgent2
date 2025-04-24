@@ -12,7 +12,7 @@ currently the code is hard coded to look for a /venv/ environment instead of a c
 ## Installation
 Install using pip: `pip install magent2`. See [docs](https://magent2.farama.org/) for usage information.
 ### Additions:
-torch, torchvision, torch_geometric, scipy
+torch, torchvision, torch_geometric, scipy, tensordict
 
 
 ## Requirements

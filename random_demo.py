@@ -2,11 +2,16 @@ from __future__ import annotations
 import random
 import numpy as np
 from pettingzoo.utils.env import AECEnv
-from magent2.environments.custom_map import battlefield, naive
+
+from agents.dummy_agent import DummyAgent
+from magent2.environments.custom_map import battlefield, naive, four_way
+from agents import dummy_agent
+import time
 
 # env = battle_v4.env(render_mode='human')
 # env = battlefield.env(render_mode='human')
-env = naive.env(render_mode='human')
+# env = naive.env(render_mode='human')
+env = four_way.env(render_mode='human')
 """
 actions for battlefield env:
 0: formation up
@@ -31,30 +36,45 @@ actions for battlefield env:
 19: attack bottom
 20: attack bottom right
 """
+obs_keys = {
+    0: "obstacle_map",
+    1: "team_0_presence",
+    2: "team_0_hp",
+    3: "team_1_presence",
+    4: "team_1_hp",
+}
+def reward_modification(observation, reward):
+    self_presence_map = observation[:, :, 1]
+    opposite_presence_map = observation[:, :, 3]
+    return reward
 
 def random_demo(env: AECEnv, render: bool = True, episodes: int = 1) -> float:
     """Runs an env object with random actions."""
     total_reward = 0
     completed_episodes = 0
-
+    do_nothing = 6
+    env.reset()
+    agents = {name:DummyAgent(name, do_nothing) for name in env.agents}
     while completed_episodes < episodes:
         env.reset()
-        for agent in env.agent_iter():
+        message_dict = {}
+        for agent_name in env.agent_iter():
             if render:
                 env.render()
+                # time.sleep(2)
 
             obs, reward, termination, truncation, _ = env.last()
-            total_reward += reward
+            custom_reward = reward_modification(obs, reward)
+            total_reward += custom_reward
+            d_agent = agents[agent_name]
             if termination or truncation:
                 action = None
             elif isinstance(obs, dict) and "action_mask" in obs:
                 action = random.choice(np.flatnonzero(obs["action_mask"]).tolist())
             else:
-                if "blue" in agent:
-                    action = 6
-                else: # red
-                    action = env.action_space(agent).sample()
-                    action = 7
+                action, message = d_agent.get_action(obs)
+                message_dict[agent_name] = message
+                print(f"{agent_name} says {message}")
             env.step(action)
 
         completed_episodes += 1
@@ -65,4 +85,4 @@ def random_demo(env: AECEnv, render: bool = True, episodes: int = 1) -> float:
     print("Average total reward", total_reward / episodes)
 
     return total_reward
-random_demo(env, render=True, episodes=1)
+random_demo(env, render=True, episodes=10)
