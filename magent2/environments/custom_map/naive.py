@@ -123,7 +123,7 @@ from magent2.environments.battle.battle import KILL_REWARD, get_config
 from magent2.environments.magent_env import magent_parallel_env, make_env
 
 
-default_map_size = 80
+default_map_size = 20
 max_cycles_default = 1000
 minimap_mode_default = False
 default_reward_args = dict(
@@ -202,7 +202,7 @@ class _parallel_env(magent_parallel_env, EzPickle):
             render_mode,
             seed,
         )
-        assert map_size >= 46, "size of map must be at least 46"
+        # assert map_size >= 46, "size of map must be at least 46"
         env = magent2.GridWorld(
             get_config(map_size, minimap_mode, seed, **reward_args), map_size=map_size
         )
@@ -248,51 +248,21 @@ class _parallel_env(magent_parallel_env, EzPickle):
 
         # left
         pos = []
-        # pos += self.get_block_obstacles(10, 15, 10, 15)
-        # pos += self.get_block_obstacles(10, 15, 45, 50)
-        # pos += self.get_block_obstacles(25, 30, 25, 45)
-        # pos += self.get_block_obstacles(50, 55, 5, 25)
-        # for y in range(1, 45):
-        #     pos.append((width / 2 - 5, y))
-        #     pos.append((width / 2 - 4, y))
-        # for y in range(50, height-1):
-        #     pos.append((width / 2 - 5, y))
-        #     pos.append((width / 2 - 4, y))
-        #
-        # for y in range(height // 2 - 25, height - 1):
-        #     pos.append((width / 2 + 5, y))
-        #     pos.append((width / 2 + 4, y))
-        #
-        # for y in range(height - 45, height - 1):
-        #     pos.append((width / 2 + 5, y))
-        #     pos.append((width / 2 + 4, y))
-
         for x, y in pos:
             if not (0 < x < width - 1 and 0 < y < height - 1):
                 assert False
         env.add_walls(pos=pos, method="custom")
 
-        n_l = 2
-        side = int(math.sqrt(n_l)) * 2
-        pos = []
-        for x in range(width // 2 - l_gap - side, width // 2 - l_gap - side + side, 2):
-            for y in range((height - side) // 2, (height - side) // 2 + side, 2):
-                pos.append([x, y, 0])
-
-        for x, y, _ in pos:
-            if not (0 < x < width - 1 and 0 < y < height - 1):
-                assert False
+        mid = map_size // 2
+        pos = [
+            [mid - 3, mid],
+        ]
         env.add_agents(handles[leftID], method="custom", pos=pos)
 
         # right
         n_r = 1
         side = int(math.sqrt(n_r)) * 2
-        pos = []
-        for x in range(width // 2 + r_gap, width // 2 + r_gap + side, 2):
-            for y in range((height - side) // 2, (height - side) // 2 + side, 2):
-                pos.append([x, y, 0])
-
-        for x, y, _ in pos:
-            if not (0 < x < width - 1 and 0 < y < height - 1):
-                assert False
+        pos = [
+            [mid + 3, mid],
+        ]
         env.add_agents(handles[rightID], method="custom", pos=pos)

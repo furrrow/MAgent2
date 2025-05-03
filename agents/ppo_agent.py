@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.normal import Normal
+from torch.distributions.categorical import Categorical
 
 def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     torch.nn.init.orthogonal_(layer.weight, std)
@@ -30,30 +31,29 @@ class Agent(nn.Module):
             self.activation,
             layer_init(nn.Linear(n_hidden, 1), std=1.0),
         )
-        self.actor_mean = nn.Sequential(
+        self.actor = nn.Sequential(
             layer_init(nn.Linear(self.conv_lin_size, n_hidden)),
             self.activation,
             layer_init(nn.Linear(n_hidden, n_hidden)),
             self.activation,
             layer_init(nn.Linear(n_hidden, np.prod(self.action_size)), std=0.01),
         )
-        self.actor_logstd = nn.Parameter(torch.zeros(1, np.prod(self.action_size)))
+        # self.actor_logstd = nn.Parameter(torch.zeros(1, np.prod(self.action_size)))
 
     def get_value(self, x):
+        batch_size = x.shape[0]
         x = self.convblock_critic(x)
         x = F.tanh(x)
-        return self.critic_seq(x)
+        return self.critic_seq(x.reshape(batch_size, -1))
 
     def get_action_and_value(self, x, action=None):
         x_actor = self.convblock_actor(x) # [1, 5, 13, 13]
         x_actor = F.tanh(x_actor) # [1, 32, 11, 11]
         batch_size = x_actor.shape[0]
-        action_mean = self.actor_mean(x_actor.reshape(batch_size, -1)) # [num_envs, 2]
-        action_logstd = self.actor_logstd.expand_as(action_mean)  # [num_envs, 2]
-        action_std = torch.exp(action_logstd)  # [num_envs, 2]
-        probs = Normal(action_mean, action_std)
+        logits = self.actor(x_actor.reshape(batch_size, -1))
+        probs = Categorical(logits=logits)
         if action is None:
             action = probs.sample()
         x_critic = self.convblock_critic(x)
         x_critic = F.tanh(x_critic)
-        return action, probs.log_prob(action).sum(1), probs.entropy().sum(1), self.critic_seq(x_critic.reshape(batch_size, -1))
+        return action, probs.log_prob(action), probs.entropy(), self.critic_seq(x_critic.reshape(batch_size, -1))
