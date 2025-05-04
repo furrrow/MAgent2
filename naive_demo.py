@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime
 import random
 import numpy as np
-from pettingzoo.utils.env import AECEnv
+import matplotlib.pyplot as plt
 import wandb
 from agents.ppo_agent import Agent
 from magent2.environments.custom_map import battlefield, naive, four_way
@@ -55,7 +55,7 @@ obs_keys = {
 class Args:
     exp_name: str = os.path.basename(__file__)[: -len(".py")]
     """the name of this experiment"""
-    seed: int = 7
+    seed: int = 5
     """seed of the experiment"""
     torch_deterministic: bool = True
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
@@ -70,6 +70,7 @@ class Args:
     capture_video: bool = False
     """whether to capture videos of the agent performances (check out `videos` folder)"""
     render: bool = True
+    render_freq: int = 10
 
     # Algorithm specific arguments
     env_id: str = "naive_custom_reward"
@@ -80,7 +81,7 @@ class Args:
     """observation radius for the agent"""
     total_timesteps: int = 5_000_000
     """total timesteps of the experiments"""
-    learning_rate: float = 5e-4
+    learning_rate: float = 3e-4
     """the learning rate of the optimizer"""
     n_hidden: int = 32
     """number of hidden layers in the network"""
@@ -144,12 +145,12 @@ def get_custom_reward(env, threshold = 3):
     team1_y, team1_x = np.nonzero(team_1_state)
     assert len(team0_x) == 1
     assert len(team1_x) == 1
-    distance = np.square(team0_x - team1_x) + np.square(team0_y - team1_y)
-    norm_distance = np.linalg.norm(np.array([team0_x, team0_y]) - np.array([team1_x, team1_y]))
-    custom_reward = - distance
+    distance = np.array([team0_x, team0_y]) - np.array([team1_x, team1_y])
+    norm_distance = np.linalg.norm(distance, 1)
+    custom_reward = - norm_distance
     if norm_distance < threshold:
-        custom_reward = 10000
-    return np.float64(custom_reward) / 100
+        custom_reward = 1000
+    return np.float64(custom_reward) / 10
 
 def get_custom_obs(observation, r = 6, key_idx = 1):
     """
@@ -203,7 +204,9 @@ if __name__ == "__main__":
 
     # env = battle_v4.env(render_mode='human')
     # env = battlefield.env(render_mode='human')
-    env = naive.env(render_mode='human')
+    rgb_env = naive.env(render_mode='rgb_array')
+    render_env = naive.env(render_mode='human')
+    env = rgb_env
     completed_episodes = 0
     do_nothing = 6
     env.reset()
@@ -238,6 +241,11 @@ if __name__ == "__main__":
     frame_list = []  # For creating a gif
     while global_step < args.total_timesteps:
         print(f"====== episode {completed_episodes} ======")
+        if args.render:
+            if completed_episodes % args.render_freq == 0:
+                env = render_env
+            else:
+                env = rgb_env
         env.reset()
         for agent_name in agent_names:
             last_state[agent_name] = None
@@ -255,7 +263,6 @@ if __name__ == "__main__":
         for agent_name in env.agent_iter(max_iter=args.num_steps * len(agent_names)):
             if args.render:
                 env.render()
-                # time.sleep(0.5)
             # skip blue agents
             if "blue" in agent_name or "blue" in env.agent_selection:
                 step += 1
@@ -275,7 +282,7 @@ if __name__ == "__main__":
             # print(agent_name, step, termination, truncation, info)
             old_rwd = reward
             reward = get_custom_reward(env, args.distance_threshold)
-            print(f"old reward {old_rwd:.3f} new_reward {reward:.3f}")
+            # print(f"old reward {old_rwd:.3f} new_reward {reward:.3f}")
             if reward > 2:
                 termination = True
                 for key in env.terminations:
