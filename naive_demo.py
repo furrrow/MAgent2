@@ -21,19 +21,19 @@ from torch.utils.tensorboard import SummaryWriter
 attacking without hitting the target does not appear to give rewards
 """
 action_dict = {
-    0: "formation_up",
+    0: "up_2",
     1: "up_left",
     2: "up",
     3: "upright",
-    4: "left",
+    4: "left_2",
     5: "left",
     6: "nothing",
     7: "right",
-    8: "formation_right",
+    8: "right_2",
     9: "down_left",
     10: "down",
     11: "down_right",
-    12: "formation_down",
+    12: "down_2",
     13: "attack_topleft",
     14: "attack_up",
     15: "attack_top_right",
@@ -72,12 +72,12 @@ class Args:
     render: bool = True
 
     # Algorithm specific arguments
-    env_id: str = "naive"
+    env_id: str = "naive_custom_reward"
     """the id of the environment"""
-    attack_penalty: float = 0.0 # -0.1
-    """attack_penalty of the environment"""
-    attack_opponent_reward: float = 0.5 # 0.2
-    """attack_opponent_reward of the environment"""
+    distance_threshold: int = 3
+    """how close does the red agent need to get to the blue agent to count as success"""
+    observation_radius: int = 6 # default 6
+    """observation radius for the agent"""
     total_timesteps: int = 5_000_000
     """total timesteps of the experiments"""
     learning_rate: float = 2.5e-4
@@ -121,16 +121,6 @@ class Args:
     num_iterations: int = 0
     """the number of iterations (computed in runtime)"""
 
-def reward_modification(observation, reward, dist_penalty_factor=-0.001):
-    self_presence_map = observation[:, :, 1]
-    opposite_presence_map = observation[:, :, 3]
-    self_loc = np.where(self_presence_map == 1)
-    opponent_loc = np.where(opposite_presence_map == 1)
-    dist = np.linalg.norm(np.array(self_loc) - np.array(opponent_loc))
-    dist = max(7, dist)
-    return reward + (dist * dist_penalty_factor)
-
-
 def calculate_returns(terminal_or_truncated, buffers, agent_name):
     advantages = torch.zeros_like(buffers[agent_name]['rewards']).to(device)
     lastgaelam = 0
@@ -146,6 +136,33 @@ def calculate_returns(terminal_or_truncated, buffers, agent_name):
         advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
     returns = advantages + buffers[agent_name]['values']
     return advantages, returns
+
+def get_custom_reward(env, threshold = 3):
+    team_0_state = env.state()[:, :, 1]
+    team_1_state = env.state()[:, :, 3]
+    team0_y, team0_x = np.nonzero(team_0_state)
+    team1_y, team1_x = np.nonzero(team_1_state)
+    assert len(team0_x) == 1
+    assert len(team1_x) == 1
+    distance = np.linalg.norm(np.array([team0_x, team0_y]) - np.array([team1_x, team1_y]))
+    custom_reward = - distance / threshold
+    if distance < threshold:
+        custom_reward = 100
+    return custom_reward / 10
+
+def get_custom_obs(observation, r = 6, key_idx = 1):
+    """
+    script to artificially limit field of view.
+    agent should be centered around idx (6, 6) so put a mask around it.
+    """
+    init_r = observation.shape[0]
+    assert (r*2 + 1) <= init_r
+    mask = np.zeros(observation.shape)
+    low = 6 - r
+    high = 6 + r + 1
+    mask[low:high, low:high, :] = 1
+    observation = observation * mask
+    return observation
 
 if __name__ == "__main__":
     args = tyro.cli(Args)
@@ -185,7 +202,7 @@ if __name__ == "__main__":
 
     # env = battle_v4.env(render_mode='human')
     # env = battlefield.env(render_mode='human')
-    env = naive.env(render_mode='human', attack_penalty=args.attack_penalty, attack_opponent_reward=args.attack_opponent_reward)
+    env = naive.env(render_mode='human')
     completed_episodes = 0
     do_nothing = 6
     env.reset()
@@ -225,6 +242,10 @@ if __name__ == "__main__":
             last_state[agent_name] = None
             last_action[agent_name] = None
             total_reward[agent_name] = 0
+            if args.anneal_lr:
+                frac = 1.0 - (completed_episodes - 1.0) / args.num_iterations
+                lrnow = frac * args.learning_rate
+                optimizers[agent_name].param_groups[0]["lr"] = lrnow
         step = 0
         message_dict = {}
         episode_reward = 0
@@ -233,9 +254,9 @@ if __name__ == "__main__":
         for agent_name in env.agent_iter(max_iter=args.num_steps * len(agent_names)):
             if args.render:
                 env.render()
-                # time.sleep
+                # time.sleep(0.5)
             # skip blue agents
-            if "blue" in agent_name:
+            if "blue" in agent_name or "blue" in env.agent_selection:
                 step += 1
                 global_step += 1
                 observation, reward, termination, truncation, info = env.last()
@@ -244,14 +265,20 @@ if __name__ == "__main__":
                     # print(agent_name, step, termination, truncation, info)
                     # print(reward)
                     env.step(None)
+                    continue
                 else:
                     env.step(do_nothing)
                     continue
             observation, reward, termination, truncation, info = env.last()
-            print(agent_name, step, termination, truncation, info)
-            # print("old_reward", reward)
-            # reward = reward_modification(observation, reward)
-            # print("new_reward", reward)
+            observation = get_custom_obs(observation, r=args.observation_radius)
+            # print(agent_name, step, termination, truncation, info)
+            old_rwd = reward
+            reward = get_custom_reward(env, args.distance_threshold)
+            # print(f"old reward {old_rwd:.3f} new_reward {reward:.3f}")
+            if reward > 2:
+                termination = True
+                for key in env.terminations:
+                    env.terminations[key] = True
             episode_reward += reward
             obs_agent = torch.Tensor(observation).to(device)
             obs_agent = torch.swapaxes(obs_agent, 0, 2)
@@ -266,7 +293,7 @@ if __name__ == "__main__":
             buffers[agent_name]["values"][step] = value.flatten()
             buffers[agent_name]["actions"][step] = action
             buffers[agent_name]["logprobs"][step] = logprob
-            print(agent_name, action, action_dict[int(action)])
+            # print(agent_name, action, action_dict[int(action)])
             terminal_or_truncated = int(np.logical_or(termination, truncation))
             buffers[agent_name]['dones'][step] = torch.Tensor([terminal_or_truncated]).to(device)
 
@@ -275,6 +302,7 @@ if __name__ == "__main__":
                 env.step(None)
             else:
                 env.step(int(action.cpu()))
+                # env.step(do_nothing)
             if agent_name == agent_names[-1]:
                 step += 1
                 global_step += 1

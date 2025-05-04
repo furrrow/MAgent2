@@ -123,7 +123,7 @@ from magent2.environments.battle.battle import KILL_REWARD, get_config
 from magent2.environments.magent_env import magent_parallel_env, make_env
 
 
-default_map_size = 20
+default_map_size = 40
 max_cycles_default = 1000
 minimap_mode_default = False
 default_reward_args = dict(
@@ -178,7 +178,7 @@ env = make_env(raw_env)
 class _parallel_env(magent_parallel_env, EzPickle):
     metadata = {
         "render_modes": ["human", "rgb_array"],
-        "name": "battlefield_v5",
+        "name": "naive_env",
         "render_fps": 5,
     }
 
@@ -208,6 +208,8 @@ class _parallel_env(magent_parallel_env, EzPickle):
         )
         self.leftID = 0
         self.rightID = 1
+        env.left_pos = []
+        env.right_pos = []
         reward_vals = np.array([KILL_REWARD] + list(reward_args.values()))
         reward_range = [
             np.minimum(reward_vals, 0).sum(),
@@ -247,22 +249,26 @@ class _parallel_env(magent_parallel_env, EzPickle):
         leftID, rightID = 0, 1
 
         # left
-        pos = []
-        for x, y in pos:
+        wall_pos = []
+        for x, y in wall_pos:
             if not (0 < x < width - 1 and 0 < y < height - 1):
                 assert False
-        env.add_walls(pos=pos, method="custom")
+        env.add_walls(pos=wall_pos, method="custom")
 
         mid = map_size // 2
-        pos = [
-            [mid - 3, mid],
+        left_pos = [
+            # [mid - 3, mid],
+            [np.random.randint(2, width-2), np.random.randint(2, width-2)],
         ]
-        env.add_agents(handles[leftID], method="custom", pos=pos)
+        env.add_agents(handles[leftID], method="custom", pos=left_pos)
+        env.left_pos = left_pos
 
         # right
         n_r = 1
         side = int(math.sqrt(n_r)) * 2
-        pos = [
-            [mid + 3, mid],
+        right_pos = [
+            # [mid + 3, mid],
+            [np.random.randint(2, width-2), np.random.randint(2, width-2)],
         ]
-        env.add_agents(handles[rightID], method="custom", pos=pos)
+        env.add_agents(handles[rightID], method="custom", pos=right_pos)
+        env.right_pos = right_pos
