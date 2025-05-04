@@ -55,7 +55,7 @@ obs_keys = {
 class Args:
     exp_name: str = os.path.basename(__file__)[: -len(".py")]
     """the name of this experiment"""
-    seed: int = 5
+    seed: int = 7
     """seed of the experiment"""
     torch_deterministic: bool = True
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
@@ -80,7 +80,7 @@ class Args:
     """observation radius for the agent"""
     total_timesteps: int = 5_000_000
     """total timesteps of the experiments"""
-    learning_rate: float = 2.5e-4
+    learning_rate: float = 5e-4
     """the learning rate of the optimizer"""
     n_hidden: int = 32
     """number of hidden layers in the network"""
@@ -144,11 +144,12 @@ def get_custom_reward(env, threshold = 3):
     team1_y, team1_x = np.nonzero(team_1_state)
     assert len(team0_x) == 1
     assert len(team1_x) == 1
-    distance = np.linalg.norm(np.array([team0_x, team0_y]) - np.array([team1_x, team1_y]))
-    custom_reward = - distance / threshold
-    if distance < threshold:
-        custom_reward = 100
-    return custom_reward / 10
+    distance = np.square(team0_x - team1_x) + np.square(team0_y - team1_y)
+    norm_distance = np.linalg.norm(np.array([team0_x, team0_y]) - np.array([team1_x, team1_y]))
+    custom_reward = - distance
+    if norm_distance < threshold:
+        custom_reward = 10000
+    return np.float64(custom_reward) / 100
 
 def get_custom_obs(observation, r = 6, key_idx = 1):
     """
@@ -274,7 +275,7 @@ if __name__ == "__main__":
             # print(agent_name, step, termination, truncation, info)
             old_rwd = reward
             reward = get_custom_reward(env, args.distance_threshold)
-            # print(f"old reward {old_rwd:.3f} new_reward {reward:.3f}")
+            print(f"old reward {old_rwd:.3f} new_reward {reward:.3f}")
             if reward > 2:
                 termination = True
                 for key in env.terminations:
