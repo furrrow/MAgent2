@@ -59,7 +59,7 @@ class Args:
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
     cuda: bool = False
     """if toggled, cuda will be enabled by default"""
-    use_wandb: bool = True
+    use_wandb: bool = False
     """if toggled, this experiment will be tracked with Weights and Biases"""
     wandb_project_name: str = "RL"
     """the wandb's project name"""
@@ -67,8 +67,8 @@ class Args:
     """the entity (team) of wandb's project"""
     capture_video: bool = False
     """whether to capture videos of the agent performances (check out `videos` folder)"""
-    render: bool = True
-    render_freq: int = 5
+    render: bool = False
+    render_freq: int = 2
     checkpoints_path: str = "./saves"  # Save path
     save_freq: int = 10
     load_model: str = ""  # Model load file name, "" doesn't load
@@ -76,7 +76,7 @@ class Args:
     # Algorithm specific arguments
     env_id: str = "naive_single"
     """the id of the environment"""
-    map_size: int = 40
+    map_size: int = 25
     """map_size"""
     n_agents: int = 1
     """the number of red agents in the map"""
@@ -213,6 +213,7 @@ if __name__ == "__main__":
     rgb_env = naive_multi.env(map_size=args.map_size, n_red_agents=args.n_agents, render_mode='rgb_array')
     render_env = naive_multi.env(map_size=args.map_size, n_red_agents=args.n_agents, render_mode='human')
     env = rgb_env
+    env_name = "rgb_env"
     episodes = 0
     iteration = 0
     do_nothing = 6
@@ -257,8 +258,10 @@ if __name__ == "__main__":
         print(f"====== iteration {iteration} ======")
         if args.render:
             if iteration % args.render_freq == 0:
+                env_name = "render_env"
                 env = render_env
             else:
+                env_name = "rgb_env"
                 env = rgb_env
         for agent_name in agent_names:
             total_reward[agent_name] = 0
@@ -268,10 +271,14 @@ if __name__ == "__main__":
                 optimizers[agent_name].param_groups[0]["lr"] = lrnow
         advantages = {}
         returns = {}
+        blue_truncation, blue_termination = False, False
         while step < args.num_steps:
             total_reward[red_agents[0]] = 0
             env.reset()
+            # print("env reset", env_name)
             for agent_name in env.agent_iter():
+                # if blue_truncation or blue_termination:
+                    # print("blue agent", blue_truncation, blue_termination)
                 if step == args.num_steps:
                     for key in env.truncations:
                         env.truncations[key] = True
@@ -281,17 +288,23 @@ if __name__ == "__main__":
                         env.render()
                 # skip blue agents
                 if "blue" in agent_name or "blue" in env.agent_selection:
-                    observation, reward, termination, truncation, info = env.last()
-                    if termination or truncation:
-                        # print(agent_name, step, termination, truncation, info)
+                    blue_observation, blue_reward, blue_termination, blue_truncation, info = env.last()
+                    # print(agent_name, step, blue_termination, blue_truncation, info)
+                    if blue_termination or blue_truncation:
                         env.step(None)
                         continue
                     else:
                         env.step(do_nothing)
                         continue
                 observation, reward, termination, truncation, info = env.last()
+                # print(agent_name, step, termination, truncation, info)
                 observation = get_custom_obs(observation, r=args.observation_radius)
                 old_rwd = reward
+                try:
+                    state = env.state()
+                except:
+                    print("error in retrieving state, resetting state...")
+                    env.reset()
                 reward = get_custom_reward(env, args.distance_threshold)
                 if reward > 2:
                     termination = True
@@ -312,12 +325,12 @@ if __name__ == "__main__":
                 buffers[agent_name]["values"][step] = value.flatten()
                 buffers[agent_name]["actions"][step] = action
                 buffers[agent_name]["logprobs"][step] = logprob
-                # print(agent_name, step, termination, truncation, action, action_dict[int(action)])
+                print(agent_name, step, termination, truncation, action, action_dict[int(action)])
                 terminal_or_truncated = int(np.logical_or(termination, truncation))
                 buffers[agent_name]['dones'][step] = torch.Tensor([terminal_or_truncated]).to(device)
 
                 if termination or truncation:
-                    # print(f"episode {episodes} total_reward {total_reward[agent_name]:.4f}")
+                    print(f"episode {episodes} total_reward {total_reward[agent_name]:.4f}")
                     writer.add_scalar(f"Charts/{agent_name}_total_rwd", total_reward[agent_name], global_step)
                     env.step(None)
                 else:
@@ -329,6 +342,7 @@ if __name__ == "__main__":
             writer.add_scalar(f"Charts/episode", episodes, global_step)
             if args.render:
                 env.close()
+            env.reset()
 
         for agent_name in red_agents:
             if len(env.terminations) < 2:
