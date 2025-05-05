@@ -15,7 +15,6 @@ import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from tensordict import TensorDict
 from torch.utils.tensorboard import SummaryWriter
 """
 attacking without hitting the target does not appear to give rewards
@@ -70,11 +69,13 @@ class Args:
     capture_video: bool = False
     """whether to capture videos of the agent performances (check out `videos` folder)"""
     render: bool = True
-    render_freq: int = 10
+    render_freq: int = 5
 
     # Algorithm specific arguments
     env_id: str = "naive_custom_reward"
     """the id of the environment"""
+    map_size: int = 25
+    """map_size"""
     distance_threshold: int = 3
     """how close does the red agent need to get to the blue agent to count as success"""
     observation_radius: int = 6 # default 6
@@ -87,7 +88,7 @@ class Args:
     """number of hidden layers in the network"""
     num_envs: int = 1
     """the number of parallel game environments"""
-    num_steps: int = 1000
+    num_steps: int = 4000
     """the number of steps to run in each environment per policy rollout"""
     anneal_lr: bool = True
     """Toggle learning rate annealing for policy and value networks"""
@@ -97,11 +98,11 @@ class Args:
     """the lambda for the general advantage estimation"""
     num_minibatches: int = 4
     """the number of mini-batches"""
-    update_epochs: int = 2
+    update_epochs: int = 4  # 4
     """the K epochs to update the policy"""
     norm_adv: bool = True
     """Toggles advantages normalization"""
-    clip_coef: float = 0.2
+    clip_coef: float = 0.1
     """the surrogate clipping coefficient"""
     clip_vloss: bool = True
     """Toggles whether or not to use a clipped loss for the value function, as per the paper."""
@@ -204,10 +205,11 @@ if __name__ == "__main__":
 
     # env = battle_v4.env(render_mode='human')
     # env = battlefield.env(render_mode='human')
-    rgb_env = naive.env(render_mode='rgb_array')
-    render_env = naive.env(render_mode='human')
+    rgb_env = naive.env(map_size=args.map_size, render_mode='rgb_array')
+    render_env = naive.env(map_size=args.map_size, render_mode='human')
     env = rgb_env
-    completed_episodes = 0
+    episodes = 0
+    iteration = 0
     do_nothing = 6
     env.reset()
     agent_names = env.agents.copy()
@@ -225,102 +227,105 @@ if __name__ == "__main__":
         optimizers[agent_name] = optim.Adam(agents[agent_name].parameters(), lr=args.learning_rate, eps=1e-5)
         obs_space_shape_swapped = env.observation_space(agent_name).shape
         obs_space_shape_swapped = list(obs_space_shape_swapped)[::-1]
-        buffer = TensorDict({
+        buffer = {
             "obs": torch.zeros((args.num_steps,) + tuple(obs_space_shape_swapped)).to(device),
             "actions": torch.zeros((args.num_steps,) + env.action_space(agent_name).shape).to(device),
             "logprobs": torch.zeros(args.num_steps).to(device),
             "rewards": torch.zeros(args.num_steps).to(device),
             "dones": torch.zeros(args.num_steps).to(device),
             "values": torch.zeros(args.num_steps).to(device),
-        })
+        }
         buffers[agent_name] = buffer
         total_reward[agent_name] = 0
 
     global_step = 0
+    step = 0
     start_time = time.time()
     frame_list = []  # For creating a gif
     while global_step < args.total_timesteps:
-        print(f"====== episode {completed_episodes} ======")
+        print(f"====== iteration {iteration} ======")
         if args.render:
-            if completed_episodes % args.render_freq == 0:
+            if iteration % args.render_freq == 0:
                 env = render_env
             else:
                 env = rgb_env
-        env.reset()
         for agent_name in agent_names:
-            last_state[agent_name] = None
-            last_action[agent_name] = None
             total_reward[agent_name] = 0
             if args.anneal_lr:
-                frac = 1.0 - (completed_episodes - 1.0) / args.num_iterations
+                frac = 1.0 - (iteration - 1.0) / args.num_iterations
                 lrnow = frac * args.learning_rate
                 optimizers[agent_name].param_groups[0]["lr"] = lrnow
-        step = 0
-        message_dict = {}
-        episode_reward = 0
         advantages = None
         returns = None
-        for agent_name in env.agent_iter(max_iter=args.num_steps * len(agent_names)):
-            if args.render:
-                env.render()
-            # skip blue agents
-            if "blue" in agent_name or "blue" in env.agent_selection:
-                step += 1
-                global_step += 1
+        while step < args.num_steps:
+            total_reward[red_agents[0]] = 0
+            env.reset()
+            for agent_name in env.agent_iter():
+                if step == args.num_steps:
+                    for key in env.truncations:
+                        env.truncations[key] = True
+                    break
+                if args.render:
+                    if episodes % args.render_freq == 0:
+                        env.render()
+                # skip blue agents
+                if "blue" in agent_name or "blue" in env.agent_selection:
+                    observation, reward, termination, truncation, info = env.last()
+                    if termination or truncation:
+                        # print(agent_name, step, termination, truncation, info)
+                        env.step(None)
+                        continue
+                    else:
+                        env.step(do_nothing)
+                        continue
                 observation, reward, termination, truncation, info = env.last()
-                # print(agent_name, step, termination, truncation, info)
+                observation = get_custom_obs(observation, r=args.observation_radius)
+                old_rwd = reward
+                reward = get_custom_reward(env, args.distance_threshold)
+                if reward > 2:
+                    termination = True
+                    for key in env.terminations:
+                        env.terminations[key] = True
+                    for key in env.truncations:
+                        env.truncations[key] = False
+                obs_agent = torch.Tensor(observation).to(device)
+                obs_agent = torch.swapaxes(obs_agent, 0, 2)
+                buffers[agent_name]['obs'][step] = obs_agent
+                if step > 0:  # reward is the result of the last step
+                    buffers[agent_name]['rewards'][step-1] = reward
+                    total_reward[agent_name] += reward
+
+                # ALGO LOGIC: action logic
+                with torch.no_grad():
+                    action, logprob, _, value = agents[agent_name].get_action_and_value(obs_agent.unsqueeze(0))
+                buffers[agent_name]["values"][step] = value.flatten()
+                buffers[agent_name]["actions"][step] = action
+                buffers[agent_name]["logprobs"][step] = logprob
+                # print(agent_name, step, termination, truncation, action, action_dict[int(action)])
+                terminal_or_truncated = int(np.logical_or(termination, truncation))
+                buffers[agent_name]['dones'][step] = torch.Tensor([terminal_or_truncated]).to(device)
+
                 if termination or truncation:
-                    # print(agent_name, step, termination, truncation, info)
-                    # print(reward)
+                    # print(f"episode {episodes} total_reward {total_reward[agent_name]:.4f}")
+                    writer.add_scalar(f"Charts/{agent_name}_total_rwd", total_reward[agent_name], global_step)
                     env.step(None)
-                    continue
                 else:
-                    env.step(do_nothing)
-                    continue
-            observation, reward, termination, truncation, info = env.last()
-            observation = get_custom_obs(observation, r=args.observation_radius)
-            # print(agent_name, step, termination, truncation, info)
-            old_rwd = reward
-            reward = get_custom_reward(env, args.distance_threshold)
-            # print(f"old reward {old_rwd:.3f} new_reward {reward:.3f}")
-            if reward > 2:
-                termination = True
-                for key in env.terminations:
-                    env.terminations[key] = True
-            episode_reward += reward
-            obs_agent = torch.Tensor(observation).to(device)
-            obs_agent = torch.swapaxes(obs_agent, 0, 2)
-            buffers[agent_name]['obs'][step] = obs_agent
-            if step > 0:  # reward is the result of the last step
-                buffers[agent_name]['rewards'][step-1] = reward
-                total_reward[agent_name] += reward
-
-            # ALGO LOGIC: action logic
-            with torch.no_grad():
-                action, logprob, _, value = agents[agent_name].get_action_and_value(obs_agent.unsqueeze(0))
-            buffers[agent_name]["values"][step] = value.flatten()
-            buffers[agent_name]["actions"][step] = action
-            buffers[agent_name]["logprobs"][step] = logprob
-            # print(agent_name, action, action_dict[int(action)])
-            terminal_or_truncated = int(np.logical_or(termination, truncation))
-            buffers[agent_name]['dones'][step] = torch.Tensor([terminal_or_truncated]).to(device)
-
-            if termination or truncation:
-                advantages, returns = calculate_returns(terminal_or_truncated, buffers, agent_name)
-                env.step(None)
-            else:
-                env.step(int(action.cpu()))
-                # env.step(do_nothing)
-            if agent_name == agent_names[-1]:
+                    env.step(int(action.cpu()))
+                    # env.step(do_nothing)
                 step += 1
                 global_step += 1
+            episodes += 1
+            writer.add_scalar(f"Charts/episode", episodes, global_step)
+            if args.render:
+                env.close()
 
-        if returns is None:
-            agent_name = red_agents[0]
-            terminal, truncated = env.terminations[agent_name], env.truncations[agent_name]
-            terminal_or_truncated = int(np.logical_or(terminal, truncated))
-            advantages, returns = calculate_returns(terminal_or_truncated, buffers, agent_name)
-
+        agent_name = red_agents[0]
+        if len(env.terminations) < 2:
+            print("warning env.terminations dict less than 2", env.terminations)
+            terminal_or_truncated = int(True)
+            # terminal, truncated = env.terminations[agent_name], env.truncations[agent_name]
+            # terminal_or_truncated = int(np.logical_or(terminal, truncated))
+        advantages, returns = calculate_returns(terminal_or_truncated, buffers, agent_name)
         # Optimizing the policy and value network
         b_inds = np.arange(args.batch_size)
         clipfracs = []
@@ -375,7 +380,7 @@ if __name__ == "__main__":
 
             if args.target_kl is not None and approx_kl > args.target_kl:
                 break
-
+        for agent_name in red_agents:
             y_pred, y_true = buffers[agent_name]["values"].cpu().numpy(), returns.cpu().numpy()
             var_y = np.var(y_true)
             explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
@@ -392,13 +397,7 @@ if __name__ == "__main__":
             writer.add_scalar(f"losses/{agent_name}_approx_kl", approx_kl.item(), global_step)
             writer.add_scalar(f"losses/{agent_name}_clipfrac", np.mean(clipfracs), global_step)
             writer.add_scalar(f"losses/{agent_name}_explained_variance", explained_var, global_step)
-            writer.add_scalar(f"Charts/{agent_name}_total_rwd", total_reward[agent_name], global_step)
-            writer.add_scalar(f"Charts/episode", completed_episodes, global_step)
         print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar(f"Charts/SPS", int(global_step / (time.time() - start_time)), global_step)
-        print("episode reward", episode_reward)
-        completed_episodes += 1
-
-        if args.render:
-            env.close()
-    print(total_reward)
+        iteration += 1
+        step = 0

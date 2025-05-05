@@ -257,8 +257,8 @@ class _parallel_env(magent_parallel_env, EzPickle):
 
         mid = map_size // 2
         left_pos = [
-            # [mid - 3, mid],
-            [np.random.randint(2, width-2), np.random.randint(2, width-2)],
+            [mid - 5, mid],
+            # [np.random.randint(2, width-2), np.random.randint(2, width-2)],
         ]
         env.add_agents(handles[leftID], method="custom", pos=left_pos)
         env.left_pos = left_pos
@@ -267,8 +267,8 @@ class _parallel_env(magent_parallel_env, EzPickle):
         n_r = 1
         side = int(math.sqrt(n_r)) * 2
         right_pos = [
-            # [mid + 3, mid],
-            [np.random.randint(2, width-2), np.random.randint(2, width-2)],
+            [mid + 5, mid],
+            # [np.random.randint(2, width-2), np.random.randint(2, width-2)],
         ]
         env.add_agents(handles[rightID], method="custom", pos=right_pos)
         env.right_pos = right_pos

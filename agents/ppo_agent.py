@@ -12,7 +12,7 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
 
 
 class Agent(nn.Module):
-    def __init__(self, env, agent_name, n_hidden=64, channel_last=False):
+    def __init__(self, env, agent_name, n_hidden=64, n_channel=5, channel_last=False):
         super().__init__()
         self.n_hidden = n_hidden
         self.channel_last = channel_last
@@ -23,7 +23,7 @@ class Agent(nn.Module):
         self.dummy_msg = 0
         self.activation = nn.ReLU()
         self.network = nn.Sequential(
-            layer_init(nn.Conv2d(5, 32, 3, stride=2)),
+            layer_init(nn.Conv2d(n_channel, 32, 3, stride=2)),
             self.activation,
             layer_init(nn.Conv2d(32, 64, 3, stride=1)),
             self.activation,
@@ -36,8 +36,6 @@ class Agent(nn.Module):
 
     def get_value(self, x):
         batch_size = x.shape[0]
-        x = self.convblock_critic(x)
-        x = F.tanh(x)
         return self.critic(self.network(x.reshape(batch_size, -1)))
 
     def get_action_and_value(self, x, action=None):
