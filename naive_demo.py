@@ -3,11 +3,10 @@ from __future__ import annotations
 import datetime
 import random
 import numpy as np
-import matplotlib.pyplot as plt
+import yaml
 import wandb
 from agents.ppo_agent import Agent
 from magent2.environments.custom_map import battlefield, naive, four_way
-from agents import dummy_agent
 import time
 import tyro
 from dataclasses import dataclass
@@ -70,6 +69,9 @@ class Args:
     """whether to capture videos of the agent performances (check out `videos` folder)"""
     render: bool = True
     render_freq: int = 5
+    checkpoints_path: str = "./saves"  # Save path
+    save_freq: int = 10
+    load_model: str = ""  # Model load file name, "" doesn't load
 
     # Algorithm specific arguments
     env_id: str = "naive_custom_reward"
@@ -175,7 +177,8 @@ if __name__ == "__main__":
     now = datetime.datetime.now()
     timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{timestamp}"
-    scenario_name = "naive_scenario"
+    if args.checkpoints_path is not None:
+        args.checkpoints_path = os.path.join(args.checkpoints_path, run_name)
 
     if args.use_wandb:
         wandb.init(
@@ -237,6 +240,12 @@ if __name__ == "__main__":
         }
         buffers[agent_name] = buffer
         total_reward[agent_name] = 0
+
+    if args.checkpoints_path is not None:
+        print(f"Checkpoints path: {args.checkpoints_path}")
+        os.makedirs(args.checkpoints_path, exist_ok=True)
+        with open(os.path.join(args.checkpoints_path, "config.yaml"), "w") as f:
+            yaml.dump(args, f)
 
     global_step = 0
     step = 0
@@ -401,3 +410,13 @@ if __name__ == "__main__":
         writer.add_scalar(f"Charts/SPS", int(global_step / (time.time() - start_time)), global_step)
         iteration += 1
         step = 0
+
+        if args.checkpoints_path:
+            if iteration % args.save_freq == 0:
+                save_dict = {}
+                for agent_name in red_agents:
+                    save_dict[f"{agent_name}"] = agents[agent_name].state_dict()
+                torch.save(
+                    save_dict,
+                    os.path.join(args.checkpoints_path, f"checkpoint_{iteration}.pt"),
+                )
