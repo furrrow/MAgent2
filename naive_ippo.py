@@ -6,7 +6,7 @@ import numpy as np
 import yaml
 import wandb
 from agents.ppo_agent import Agent
-from magent2.environments.custom_map import battlefield, naive, four_way
+from magent2.environments.custom_map import naive_multi, four_way
 import time
 import tyro
 from dataclasses import dataclass
@@ -74,10 +74,12 @@ class Args:
     load_model: str = ""  # Model load file name, "" doesn't load
 
     # Algorithm specific arguments
-    env_id: str = "naive_custom_reward"
+    env_id: str = "naive_multi"
     """the id of the environment"""
-    map_size: int = 25
+    map_size: int = 40
     """map_size"""
+    n_agents: int = 2
+    """the number of red agents in the map"""
     distance_threshold: int = 3
     """how close does the red agent need to get to the blue agent to count as success"""
     observation_radius: int = 6 # default 6
@@ -146,12 +148,12 @@ def get_custom_reward(env, threshold = 3):
     team_1_state = env.state()[:, :, 3]
     team0_y, team0_x = np.nonzero(team_0_state)
     team1_y, team1_x = np.nonzero(team_1_state)
-    assert len(team0_x) == 1
-    assert len(team1_x) == 1
-    distance = np.array([team0_x, team0_y]) - np.array([team1_x, team1_y])
-    norm_distance = np.linalg.norm(distance, 1)
-    custom_reward = - norm_distance
-    if norm_distance < threshold:
+    team_0_locs = np.array([team0_x, team0_y]).T
+    team_1_locs = np.array([team1_x, team1_y]).T
+    distance = team_0_locs - team_1_locs
+    norm_distance = np.linalg.norm(distance, axis=1)
+    custom_reward = - min(norm_distance)
+    if min(norm_distance) < threshold:
         custom_reward = 1000
     return np.float64(custom_reward) / 10
 
@@ -208,8 +210,8 @@ if __name__ == "__main__":
 
     # env = battle_v4.env(render_mode='human')
     # env = battlefield.env(render_mode='human')
-    rgb_env = naive.env(map_size=args.map_size, render_mode='rgb_array')
-    render_env = naive.env(map_size=args.map_size, render_mode='human')
+    rgb_env = naive_multi.env(map_size=args.map_size, n_red_agents=args.n_agents, render_mode='rgb_array')
+    render_env = naive_multi.env(map_size=args.map_size, n_red_agents=args.n_agents, render_mode='human')
     env = rgb_env
     episodes = 0
     iteration = 0
@@ -264,8 +266,8 @@ if __name__ == "__main__":
                 frac = 1.0 - (iteration - 1.0) / args.num_iterations
                 lrnow = frac * args.learning_rate
                 optimizers[agent_name].param_groups[0]["lr"] = lrnow
-        advantages = None
-        returns = None
+        advantages = {}
+        returns = {}
         while step < args.num_steps:
             total_reward[red_agents[0]] = 0
             env.reset()
@@ -328,69 +330,71 @@ if __name__ == "__main__":
             if args.render:
                 env.close()
 
-        agent_name = red_agents[0]
-        if len(env.terminations) < 2:
-            print("warning env.terminations dict less than 2", env.terminations)
-            terminal_or_truncated = int(True)
-            # terminal, truncated = env.terminations[agent_name], env.truncations[agent_name]
-            # terminal_or_truncated = int(np.logical_or(terminal, truncated))
-        advantages, returns = calculate_returns(terminal_or_truncated, buffers, agent_name)
+        for agent_name in red_agents:
+            if len(env.terminations) < 2:
+                print("warning env.terminations dict less than 2", env.terminations)
+                terminal_or_truncated = int(True)
+            else:
+                terminal, truncated = env.terminations[agent_name], env.truncations[agent_name]
+                terminal_or_truncated = int(np.logical_or(terminal, truncated))
+            advantages[agent_name], returns[agent_name] = calculate_returns(terminal_or_truncated, buffers, agent_name)
         # Optimizing the policy and value network
         b_inds = np.arange(args.batch_size)
         clipfracs = []
         for epoch in range(args.update_epochs):
             np.random.shuffle(b_inds)
-            for start in range(0, args.batch_size, args.minibatch_size):
-                end = start + args.minibatch_size
-                mb_inds = b_inds[start:end]
+            for agent_name in red_agents:
+                for start in range(0, args.batch_size, args.minibatch_size):
+                    end = start + args.minibatch_size
+                    mb_inds = b_inds[start:end]
 
-                _, newlogprob, entropy, newvalue = agents[agent_name].get_action_and_value(
-                    buffers[agent_name]["obs"][mb_inds], buffers[agent_name]["actions"][mb_inds])
-                logratio = newlogprob - buffers[agent_name]["logprobs"][mb_inds]
-                ratio = logratio.exp()
+                    _, newlogprob, entropy, newvalue = agents[agent_name].get_action_and_value(
+                        buffers[agent_name]["obs"][mb_inds], buffers[agent_name]["actions"][mb_inds])
+                    logratio = newlogprob - buffers[agent_name]["logprobs"][mb_inds]
+                    ratio = logratio.exp()
 
-                with torch.no_grad():
-                    # calculate approx_kl http://joschu.net/blog/kl-approx.html
-                    old_approx_kl = (-logratio).mean()
-                    approx_kl = ((ratio - 1) - logratio).mean()
-                    clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
+                    with torch.no_grad():
+                        # calculate approx_kl http://joschu.net/blog/kl-approx.html
+                        old_approx_kl = (-logratio).mean()
+                        approx_kl = ((ratio - 1) - logratio).mean()
+                        clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
 
-                mb_advantages = advantages[mb_inds]
-                if args.norm_adv:
-                    mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
+                    mb_advantages = advantages[agent_name][mb_inds]
+                    if args.norm_adv:
+                        mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
 
-                # Policy loss
-                pg_loss1 = -mb_advantages * ratio
-                pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
-                pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+                    # Policy loss
+                    pg_loss1 = -mb_advantages * ratio
+                    pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
+                    pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
-                # Value loss
-                newvalue = newvalue.view(-1)
-                if args.clip_vloss:
-                    v_loss_unclipped = (newvalue - returns[mb_inds]) ** 2
-                    v_clipped = buffers[agent_name]["values"][mb_inds] + torch.clamp(
-                        newvalue - buffers[agent_name]["values"][mb_inds],
-                        -args.clip_coef,
-                        args.clip_coef,
-                    )
-                    v_loss_clipped = (v_clipped - returns[mb_inds]) ** 2
-                    v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
-                    v_loss = 0.5 * v_loss_max.mean()
-                else:
-                    v_loss = 0.5 * ((newvalue - returns[mb_inds]) ** 2).mean()
+                    # Value loss
+                    newvalue = newvalue.view(-1)
+                    if args.clip_vloss:
+                        v_loss_unclipped = (newvalue - returns[agent_name][mb_inds]) ** 2
+                        v_clipped = buffers[agent_name]["values"][mb_inds] + torch.clamp(
+                            newvalue - buffers[agent_name]["values"][mb_inds],
+                            -args.clip_coef,
+                            args.clip_coef,
+                        )
+                        v_loss_clipped = (v_clipped - returns[agent_name][mb_inds]) ** 2
+                        v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
+                        v_loss = 0.5 * v_loss_max.mean()
+                    else:
+                        v_loss = 0.5 * ((newvalue - returns[agent_name][mb_inds]) ** 2).mean()
 
-                entropy_loss = entropy.mean()
-                loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
+                    entropy_loss = entropy.mean()
+                    loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
 
-                optimizers[agent_name].zero_grad()
-                loss.backward()
-                nn.utils.clip_grad_norm_(agents[agent_name].parameters(), args.max_grad_norm)
-                optimizers[agent_name].step()
+                    optimizers[agent_name].zero_grad()
+                    loss.backward()
+                    nn.utils.clip_grad_norm_(agents[agent_name].parameters(), args.max_grad_norm)
+                    optimizers[agent_name].step()
 
-            if args.target_kl is not None and approx_kl > args.target_kl:
-                break
+                if args.target_kl is not None and approx_kl > args.target_kl:
+                    break
         for agent_name in red_agents:
-            y_pred, y_true = buffers[agent_name]["values"].cpu().numpy(), returns.cpu().numpy()
+            y_pred, y_true = buffers[agent_name]["values"].cpu().numpy(), returns[agent_name].cpu().numpy()
             var_y = np.var(y_true)
             explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 

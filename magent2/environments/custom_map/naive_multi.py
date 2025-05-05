@@ -124,6 +124,7 @@ from magent2.environments.magent_env import magent_parallel_env, make_env
 
 
 default_map_size = 40
+n_red_agents = 1
 max_cycles_default = 1000
 minimap_mode_default = False
 default_reward_args = dict(
@@ -136,6 +137,7 @@ default_reward_args = dict(
 
 def parallel_env(
     map_size=default_map_size,
+    n_red_agents=n_red_agents,
     max_cycles=max_cycles_default,
     minimap_mode=minimap_mode_default,
     extra_features=False,
@@ -147,6 +149,7 @@ def parallel_env(
     env_reward_args.update(reward_args)
     return _parallel_env(
         map_size,
+        n_red_agents,
         minimap_mode,
         env_reward_args,
         max_cycles,
@@ -158,6 +161,7 @@ def parallel_env(
 
 def raw_env(
     map_size=default_map_size,
+    n_red_agents=n_red_agents,
     max_cycles=max_cycles_default,
     minimap_mode=minimap_mode_default,
     extra_features=False,
@@ -166,7 +170,7 @@ def raw_env(
 ):
     return parallel_to_aec_wrapper(
         parallel_env(
-            map_size, max_cycles, minimap_mode, extra_features, seed=seed, **reward_args
+            map_size, n_red_agents, max_cycles, minimap_mode, extra_features, seed=seed, **reward_args
         )
     )
 
@@ -185,6 +189,7 @@ class _parallel_env(magent_parallel_env, EzPickle):
     def __init__(
         self,
         map_size,
+        n_red_agents,
         minimap_mode,
         reward_args,
         max_cycles,
@@ -208,6 +213,7 @@ class _parallel_env(magent_parallel_env, EzPickle):
         )
         self.leftID = 0
         self.rightID = 1
+        self.n_red_agents = n_red_agents
         env.left_pos = []
         env.right_pos = []
         reward_vals = np.array([KILL_REWARD] + list(reward_args.values()))
@@ -254,12 +260,16 @@ class _parallel_env(magent_parallel_env, EzPickle):
             if not (0 < x < width - 1 and 0 < y < height - 1):
                 assert False
         env.add_walls(pos=wall_pos, method="custom")
-
+        # left = red
         mid = map_size // 2
         left_pos = [
-            [mid - 5, mid],
-            # [np.random.randint(2, width-2), np.random.randint(2, width-2)],
+            # [mid - 5, mid],
         ]
+        while len(left_pos) < self.n_red_agents:
+            new_pos = [np.random.randint(2, width-2), np.random.randint(2, width-2)]
+            if not (new_pos in left_pos):
+                left_pos.append(new_pos)
+
         env.add_agents(handles[leftID], method="custom", pos=left_pos)
         env.left_pos = left_pos
 
