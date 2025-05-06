@@ -5,7 +5,7 @@ import random
 import numpy as np
 import yaml
 import wandb
-from agents.ppo_agent import CentralCritic, DecentActor
+from agents.ppo_agent import MessageCritic, MessageActor
 from magent2.environments.custom_map import naive_multi, four_way
 import time
 import tyro
@@ -59,7 +59,7 @@ class Args:
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
     cuda: bool = False
     """if toggled, cuda will be enabled by default"""
-    use_wandb: bool = True
+    use_wandb: bool = False
     """if toggled, this experiment will be tracked with Weights and Biases"""
     wandb_project_name: str = "RL"
     """the wandb's project name"""
@@ -74,11 +74,11 @@ class Args:
     load_model: str = ""  # Model load file name, "" doesn't load
 
     # Algorithm specific arguments
-    env_id: str = "naive_mappo_size40"
+    env_id: str = "naive_msgppo_size40"
     """the id of the environment"""
     map_size: int = 40
     """map_size"""
-    n_agents: int = 2
+    n_agents: int = 3
     """the number of red agents in the map"""
     distance_threshold: int = 3
     """how close does the red agent need to get to the blue agent to count as success"""
@@ -92,7 +92,7 @@ class Args:
     """number of hidden layers in the network"""
     num_envs: int = 1
     """the number of parallel game environments"""
-    num_steps: int = 4000
+    num_steps: int = 1000
     """the number of steps to run in each environment per policy rollout"""
     anneal_lr: bool = True
     """Toggle learning rate annealing for policy and value networks"""
@@ -242,8 +242,8 @@ if __name__ == "__main__":
     returns = {}
     """ setup agent buffer and initial observations """
     for agent_name in agent_names:
-        actors[agent_name] = DecentActor(env, agent_name, args.n_hidden).to(device)
-        critics[agent_name] = CentralCritic(env, red_agents, args.n_hidden, 5*len(red_agents)).to(device)
+        actors[agent_name] = MessageActor(env, agent_name, args.n_agents, args.n_hidden).to(device)
+        critics[agent_name] = MessageCritic(env, red_agents, args.n_hidden, 5*len(red_agents)).to(device)
         actor_optimizers[agent_name] = optim.Adam(actors[agent_name].parameters(), lr=args.learning_rate, eps=1e-5)
         critic_optimizers[agent_name] = optim.Adam(critics[agent_name].parameters(), lr=args.learning_rate, eps=1e-5)
         obs_space_shape_swapped = env.observation_space(agent_name).shape
@@ -255,6 +255,7 @@ if __name__ == "__main__":
             "rewards": torch.zeros(args.num_steps).to(device),
             "dones": torch.zeros(args.num_steps).to(device),
             "values": torch.zeros(args.num_steps).to(device),
+            "recv_msg": torch.zeros(args.num_steps, args.n_agents).to(device),
         }
         buffers[agent_name] = buffer
         total_reward[agent_name] = 0
@@ -269,6 +270,16 @@ if __name__ == "__main__":
     step = 0
     start_time = time.time()
     frame_list = []  # For creating a gif
+    edge_list = []
+    send_dict = {}
+    recv_dict = {}
+    for i, i_name in enumerate(red_agents):
+        send_dict[i_name] = [0.0] * len(red_agents)
+        recv_dict[i_name] = [0.0] * len(red_agents)
+        for j, j_name in enumerate(red_agents):
+            if i != j:
+                edge_list.append(torch.tensor([i, j]))
+    edge_index = torch.stack(edge_list)
     while global_step < args.total_timesteps:
         print(f"====== iteration {iteration} ======")
         if args.render:
@@ -330,10 +341,15 @@ if __name__ == "__main__":
                     total_reward[agent_name] += reward
 
                 # ALGO LOGIC: action logic
+                agent_idx = red_agents.index(agent_name)
+                recv_msg = [send_dict[agent_i][agent_idx] for agent_i in red_agents]
+                recv_msg = torch.tensor(recv_msg)
                 with torch.no_grad():
-                    action, logprob, entropy = actors[agent_name].get_action(obs_agent.unsqueeze(0))
-                    value = critics[agent_name].get_value(torch.stack(obs_all_tensor))
+                    action, msg_out, logprob, entropy = actors[agent_name].get_action(obs_agent.unsqueeze(0), recv_msg, edge_index)
+                    value = critics[agent_name].get_value(torch.stack(obs_all_tensor), recv_msg, edge_index)
+                    send_dict[agent_name] = list(msg_out.cpu())
                 buffers[agent_name]["values"][step] = value.flatten()
+                buffers[agent_name]["recv_msg"][step] = recv_msg
                 buffers[agent_name]["actions"][step] = action
                 buffers[agent_name]["logprobs"][step] = logprob
                 # print(agent_name, step, termination, truncation, action, action_dict[int(action)])
@@ -371,9 +387,14 @@ if __name__ == "__main__":
                 for start in range(0, args.batch_size, args.minibatch_size):
                     end = start + args.minibatch_size
                     mb_inds = b_inds[start:end]
-
-                    _, newlogprob, entropy = actors[agent_name].get_action(
-                        buffers[agent_name]["obs"][mb_inds], buffers[agent_name]["actions"][mb_inds])
+                    r, h = edge_index.shape
+                    # edge_index_dup = edge_index.unsqueeze(0).expand(len(mb_inds), r, h)
+                    _, _, newlogprob, entropy = actors[agent_name].get_bulk_action(
+                        buffers[agent_name]["obs"][mb_inds],
+                        buffers[agent_name]["recv_msg"][mb_inds],
+                        edge_index,
+                        buffers[agent_name]["actions"][mb_inds],
+                    )
                     logratio = newlogprob - buffers[agent_name]["logprobs"][mb_inds]
                     ratio = logratio.exp()
 
@@ -397,10 +418,16 @@ if __name__ == "__main__":
                     actor_optimizers[agent_name].step()
 
                     # Value loss
-                    _, newlogprob, entropy = actors[agent_name].get_action(
-                        buffers[agent_name]["obs"][mb_inds], buffers[agent_name]["actions"][mb_inds])
+                    _, _, newlogprob, entropy = actors[agent_name].get_bulk_action(
+                        buffers[agent_name]["obs"][mb_inds],
+                        buffers[agent_name]["recv_msg"][mb_inds],
+                        edge_index,
+                        buffers[agent_name]["actions"][mb_inds],
+                    )
                     all_buffer_obs = [buffers[agent_name]["obs"][mb_inds] for agent_name in red_agents]
-                    newvalue = critics[agent_name].get_value(torch.stack(all_buffer_obs)).squeeze(-1)
+                    newvalue = critics[agent_name].get_value(torch.stack(all_buffer_obs),
+                                                             buffers[agent_name]["recv_msg"][mb_inds],
+                                                             edge_index).squeeze(-1)
                     # newvalue = newvalue.view(-1)
                     if args.clip_vloss:
                         v_loss_unclipped = (newvalue - returns[agent_name][mb_inds]) ** 2

@@ -263,7 +263,7 @@ if __name__ == "__main__":
         for agent_name in agent_names:
             total_reward[agent_name] = 0
             if args.anneal_lr:
-                frac = 1.0 - (iteration - 1.0) / args.num_iterations
+                frac = 1.0 - (iteration - 1.0) /    args.num_iterations
                 lrnow = frac * args.learning_rate
                 optimizers[agent_name].param_groups[0]["lr"] = lrnow
         advantages = {}
