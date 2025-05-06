@@ -5,7 +5,7 @@ import random
 import numpy as np
 import yaml
 import wandb
-from agents.ppo_agent import Agent
+from agents.ppo_agent import IppoAgent
 from magent2.environments.custom_map import naive_multi, four_way
 import time
 import tyro
@@ -59,7 +59,7 @@ class Args:
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
     cuda: bool = False
     """if toggled, cuda will be enabled by default"""
-    use_wandb: bool = True
+    use_wandb: bool = False
     """if toggled, this experiment will be tracked with Weights and Biases"""
     wandb_project_name: str = "RL"
     """the wandb's project name"""
@@ -67,14 +67,14 @@ class Args:
     """the entity (team) of wandb's project"""
     capture_video: bool = False
     """whether to capture videos of the agent performances (check out `videos` folder)"""
-    render: bool = True
+    render: bool = False
     render_freq: int = 5
     checkpoints_path: str = "./saves"  # Save path
     save_freq: int = 10
     load_model: str = ""  # Model load file name, "" doesn't load
 
     # Algorithm specific arguments
-    env_id: str = "naive_multi"
+    env_id: str = "naive_multi_siz40"
     """the id of the environment"""
     map_size: int = 40
     """map_size"""
@@ -228,7 +228,7 @@ if __name__ == "__main__":
     returns = {}
     """ setup agent buffer and initial observations """
     for agent_name in agent_names:
-        agents[agent_name] = Agent(env, agent_name, args.n_hidden, channel_last=True).to(device)
+        agents[agent_name] = IppoAgent(env, agent_name, args.n_hidden, channel_last=True).to(device)
         optimizers[agent_name] = optim.Adam(agents[agent_name].parameters(), lr=args.learning_rate, eps=1e-5)
         obs_space_shape_swapped = env.observation_space(agent_name).shape
         obs_space_shape_swapped = list(obs_space_shape_swapped)[::-1]
@@ -292,6 +292,11 @@ if __name__ == "__main__":
                 observation, reward, termination, truncation, info = env.last()
                 observation = get_custom_obs(observation, r=args.observation_radius)
                 old_rwd = reward
+                try:
+                    state = env.state()
+                except:
+                    print("error in retrieving state, resetting state...")
+                    env.reset()
                 reward = get_custom_reward(env, args.distance_threshold)
                 if reward > 2:
                     termination = True
