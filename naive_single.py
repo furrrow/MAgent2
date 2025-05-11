@@ -45,6 +45,8 @@ class Args:
     render_freq: int = 10
     """ how often to render training runs """
     eval_freq: int = 10
+    n_eval: int = 5
+    """ how many loop to run per eval"""
     capture_video: bool = True
     """whether to capture videos of the agent performances (check out `videos` folder)"""
     checkpoints_path: str = "./saves"  # Save path
@@ -357,59 +359,62 @@ if __name__ == "__main__":
 
         # eval loop:
         if iteration % args.eval_freq == 0:
+            env = rgb_env
+            frame_list = []  # For creating a gif
+            n_eval = args.n_eval
             for agent_name in agent_names:
                 total_reward[agent_name] = 0
-            env = rgb_env
-            env.reset()
-            frame_list = []  # For creating a gif
-            for agent_name in env.agent_iter():
-                if args.capture_video:
-                    image = Image.fromarray(env.render())
-                    frame_list.append(image)
-                # skip blue agents
-                if "blue" in agent_name or "blue" in env.agent_selection:
+            for _ in range(n_eval):
+                env.reset()
+                for agent_name in env.agent_iter():
+                    if args.capture_video:
+                        image = Image.fromarray(env.render())
+                        frame_list.append(image)
+                    # skip blue agents
+                    if "blue" in agent_name or "blue" in env.agent_selection:
+                        observation, reward, termination, truncation, info = env.last()
+                        if termination or truncation:
+                            # print(agent_name, step, termination, truncation, info)
+                            env.step(None)
+                            continue
+                        else:
+                            env.step(do_nothing)
+                            continue
                     observation, reward, termination, truncation, info = env.last()
+                    # print(agent_name, step, termination, truncation, info)
+                    observation = get_custom_obs(observation, r=args.observation_radius)
+                    old_rwd = reward
+                    try:
+                        state = env.state()
+                    except:
+                        print("error in retrieving state, resetting state...")
+                        env.reset()
+                    reward = square_distance_reward(env, args.distance_threshold)
+                    total_reward[agent_name] += reward
+                    if reward > 2:
+                        termination = True
+                        for key in env.terminations:
+                            env.terminations[key] = True
+                        for key in env.truncations:
+                            env.truncations[key] = False
+                    obs_agent = torch.Tensor(observation).to(device)
+                    obs_agent = torch.swapaxes(obs_agent, 0, 2)
+
+                    # ALGO LOGIC: action logic
+                    with torch.no_grad():
+                        action = agents[agent_name].get_greedy_action(obs_agent.unsqueeze(0))
+
                     if termination or truncation:
-                        # print(agent_name, step, termination, truncation, info)
                         env.step(None)
-                        continue
                     else:
-                        env.step(do_nothing)
-                        continue
-                observation, reward, termination, truncation, info = env.last()
-                # print(agent_name, step, termination, truncation, info)
-                observation = get_custom_obs(observation, r=args.observation_radius)
-                old_rwd = reward
-                try:
-                    state = env.state()
-                except:
-                    print("error in retrieving state, resetting state...")
-                    env.reset()
-                reward = square_distance_reward(env, args.distance_threshold)
-                total_reward[agent_name] += reward
-                if reward > 2:
-                    termination = True
-                    for key in env.terminations:
-                        env.terminations[key] = True
-                    for key in env.truncations:
-                        env.truncations[key] = False
-                obs_agent = torch.Tensor(observation).to(device)
-                obs_agent = torch.swapaxes(obs_agent, 0, 2)
-
-                # ALGO LOGIC: action logic
-                with torch.no_grad():
-                    action = agents[agent_name].get_greedy_action(obs_agent.unsqueeze(0))
-
-                if termination or truncation:
-                    print(f"episode {episodes} eval total_reward {total_reward[agent_name]:.4f}")
-                    writer.add_scalar(f"Charts/{agent_name}_eval_total_rwd", total_reward[agent_name], global_step)
-                    env.step(None)
-                else:
-                    env.step(int(action.cpu()))
+                        env.step(int(action.cpu()))
+            for agent_name in red_agents:
+                print(f"episode {episodes} eval average reward over {n_eval} episodes: {total_reward[agent_name]/n_eval:.4f}")
+                writer.add_scalar(f"Charts/{agent_name}_eval_avg_rwd_{n_eval}", total_reward[agent_name]/n_eval, global_step)
             if args.render:
                 if len(frame_list) > 0:
                     frame_list[0].save(f'{args.checkpoints_path}/iter{iteration}_out.gif', save_all=True,
-                                       append_images=frame_list[1:], duration=3, loop=2)
+                                       append_images=frame_list[1:], duration=5, loop=0)
             env.close()
             env.reset()
 
