@@ -34,7 +34,7 @@ class Args:
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
     cuda: bool = False
     """if toggled, cuda will be enabled by default"""
-    use_wandb: bool = True
+    use_wandb: bool = False
     """if toggled, this experiment will be tracked with Weights and Biases"""
     wandb_project_name: str = "RL"
     """the wandb's project name"""
@@ -114,7 +114,7 @@ if __name__ == "__main__":
     args.num_iterations = args.total_timesteps // args.batch_size
     now = datetime.datetime.now()
     timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
-    run_name = f"{args.env_id}__{args.exp_name}__size{args.map_size}__{args.seed}__{timestamp}"
+    run_name = f"{args.env_id}__size{args.map_size}__{args.seed}__{timestamp}"
     if args.checkpoints_path is not None:
         args.checkpoints_path = os.path.join(args.checkpoints_path, run_name)
 
@@ -264,7 +264,7 @@ if __name__ == "__main__":
                     writer.add_scalar(f"Charts/{agent_name}_total_rwd", total_reward[agent_name], global_step)
                     env.step(None)
                 else:
-                    env.step(int(action.cpu()))
+                    env.step(custom_actions[int(action.cpu())])
                 step += 1
                 global_step += 1
             episodes += 1
@@ -407,7 +407,7 @@ if __name__ == "__main__":
                     if termination or truncation:
                         env.step(None)
                     else:
-                        env.step(int(action.cpu()))
+                        env.step(custom_actions[int(action.cpu())])
             for agent_name in red_agents:
                 print(f"episode {episodes} eval average reward over {n_eval} episodes: {total_reward[agent_name]/n_eval:.4f}")
                 writer.add_scalar(f"Charts/{agent_name}_eval_avg_rwd_{n_eval}", total_reward[agent_name]/n_eval, global_step)
