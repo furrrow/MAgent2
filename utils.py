@@ -65,7 +65,7 @@ def calculate_returns(args, step, terminal_or_truncated, buffers, agent_name, va
     return advantages, returns
 
 
-def get_custom_reward(env, threshold = 3):
+def square_distance_reward(env, threshold = 3):
     team_0_state = env.state()[:, :, 1]
     team_1_state = env.state()[:, :, 3]
     team0_y, team0_x = np.nonzero(team_0_state)

@@ -16,7 +16,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 from PIL import Image
-from utils import get_custom_obs, get_all_custom_obs, get_custom_reward, calculate_returns
+from utils import get_custom_obs, get_all_custom_obs, square_distance_reward, calculate_returns
 from utils import action_dict, custom_actions
 
 """
@@ -40,10 +40,13 @@ class Args:
     """the wandb's project name"""
     wandb_entity: str = "jianyu34-university-of-maryland"
     """the entity (team) of wandb's project"""
-    capture_video: bool = False
+
+    render: bool = True
+    render_freq: int = 10
+    """ how often to render training runs """
+    eval_freq: int = 10
+    capture_video: bool = True
     """whether to capture videos of the agent performances (check out `videos` folder)"""
-    render: bool = False
-    render_freq: int = 15
     checkpoints_path: str = "./saves"  # Save path
     save_freq: int = 50
     load_model: str = ""  # Model load file name, "" doesn't load
@@ -176,7 +179,6 @@ if __name__ == "__main__":
             "values": torch.zeros(args.num_steps).to(device),
         }
         buffers[agent_name] = buffer
-        total_reward[agent_name] = 0
 
     if args.checkpoints_path is not None:
         print(f"Checkpoints path: {args.checkpoints_path}")
@@ -189,38 +191,29 @@ if __name__ == "__main__":
     start_time = time.time()
     while global_step < args.total_timesteps:
         print(f"====== iteration {iteration} ======")
-        if args.render:
-            if iteration % args.render_freq == 0:
-                env_name = "render_env"
-                env = render_env
-            else:
-                env_name = "rgb_env"
-                env = rgb_env
         for agent_name in agent_names:
-            total_reward[agent_name] = 0
             if args.anneal_lr:
                 frac = 1.0 - (iteration - 1.0) / args.num_iterations
                 lrnow = frac * args.learning_rate
                 optimizers[agent_name].param_groups[0]["lr"] = lrnow
         advantages = {}
         returns = {}
-        blue_truncation, blue_termination = False, False
         while step < args.num_steps:
-            total_reward[red_agents[0]] = 0
+            for agent_name in agent_names:
+                total_reward[agent_name] = 0
+            if args.render:
+                if episodes % args.render_freq == 0:
+                    env_name = "render_env"
+                    env = render_env
+                else:
+                    env_name = "rgb_env"
+                    env = rgb_env
             env.reset()
-            # print("env reset", env_name)
-            frame_list = []  # For creating a gif
             for agent_name in env.agent_iter():
-                # if blue_truncation or blue_termination:
-                    # print("blue agent", blue_truncation, blue_termination)
                 if step == args.num_steps:
                     for key in env.truncations:
                         env.truncations[key] = True
                     break
-                if args.render:
-                    if episodes % args.render_freq == 0:
-                        image = Image.fromarray(env.render())
-                        frame_list.append(image)
                 # skip blue agents
                 if "blue" in agent_name or "blue" in env.agent_selection:
                     observation, reward, termination, truncation, info = env.last()
@@ -240,7 +233,7 @@ if __name__ == "__main__":
                 except:
                     print("error in retrieving state, resetting state...")
                     env.reset()
-                reward = get_custom_reward(env, args.distance_threshold)
+                reward = square_distance_reward(env, args.distance_threshold)
                 if reward > 2:
                     termination = True
                     for key in env.terminations:
@@ -270,17 +263,12 @@ if __name__ == "__main__":
                     env.step(None)
                 else:
                     env.step(int(action.cpu()))
-                    # env.step(do_nothing)
                 step += 1
                 global_step += 1
             episodes += 1
             writer.add_scalar(f"Charts/episode", episodes, global_step)
             if args.render:
                 env.close()
-                env.reset()
-                if len(frame_list) > 0:
-                    frame_list[0].save(f'{args.checkpoints_path}/iter{iteration}_out.gif', save_all=True,
-                                       append_images=frame_list[1:], duration=5, loop=0)
 
         for agent_name in red_agents:
             if len(env.terminations) < 2:
@@ -365,8 +353,69 @@ if __name__ == "__main__":
             writer.add_scalar(f"losses/{agent_name}_explained_variance", explained_var, global_step)
         print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar(f"Charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+
+
+        # eval loop:
+        if iteration % args.eval_freq == 0:
+            for agent_name in agent_names:
+                total_reward[agent_name] = 0
+            env = rgb_env
+            env.reset()
+            frame_list = []  # For creating a gif
+            for agent_name in env.agent_iter():
+                if args.capture_video:
+                    image = Image.fromarray(env.render())
+                    frame_list.append(image)
+                # skip blue agents
+                if "blue" in agent_name or "blue" in env.agent_selection:
+                    observation, reward, termination, truncation, info = env.last()
+                    if termination or truncation:
+                        # print(agent_name, step, termination, truncation, info)
+                        env.step(None)
+                        continue
+                    else:
+                        env.step(do_nothing)
+                        continue
+                observation, reward, termination, truncation, info = env.last()
+                # print(agent_name, step, termination, truncation, info)
+                observation = get_custom_obs(observation, r=args.observation_radius)
+                old_rwd = reward
+                try:
+                    state = env.state()
+                except:
+                    print("error in retrieving state, resetting state...")
+                    env.reset()
+                reward = square_distance_reward(env, args.distance_threshold)
+                total_reward[agent_name] += reward
+                if reward > 2:
+                    termination = True
+                    for key in env.terminations:
+                        env.terminations[key] = True
+                    for key in env.truncations:
+                        env.truncations[key] = False
+                obs_agent = torch.Tensor(observation).to(device)
+                obs_agent = torch.swapaxes(obs_agent, 0, 2)
+
+                # ALGO LOGIC: action logic
+                with torch.no_grad():
+                    action = agents[agent_name].get_greedy_action(obs_agent.unsqueeze(0))
+
+                if termination or truncation:
+                    print(f"episode {episodes} eval total_reward {total_reward[agent_name]:.4f}")
+                    writer.add_scalar(f"Charts/{agent_name}_eval_total_rwd", total_reward[agent_name], global_step)
+                    env.step(None)
+                else:
+                    env.step(int(action.cpu()))
+            if args.render:
+                if len(frame_list) > 0:
+                    frame_list[0].save(f'{args.checkpoints_path}/iter{iteration}_out.gif', save_all=True,
+                                       append_images=frame_list[1:], duration=3, loop=2)
+            env.close()
+            env.reset()
+
         iteration += 1
         step = 0
+
 
         if args.checkpoints_path:
             if iteration % args.save_freq == 0:

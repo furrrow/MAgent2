@@ -64,6 +64,12 @@ class IppoAgent(nn.Module):
             action = probs.sample()
         return action, probs.log_prob(action), probs.entropy(), self.critic(hidden.reshape(batch_size, -1))
 
+    def get_greedy_action(self, x):
+        hidden = self.network(x)
+        logits = self.actor(hidden)
+        action = torch.argmax(logits)
+        return action
+
 class CentralCritic(nn.Module):
     def __init__(self, env, agent_list, n_hidden=64, n_channel=5):
         super().__init__()
