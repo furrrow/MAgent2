@@ -15,6 +15,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
+from PIL import Image
 """
 attacking without hitting the target does not appear to give rewards
 """
@@ -71,10 +72,13 @@ class Args:
     render_freq: int = 2
     checkpoints_path: str = "./saves"  # Save path
     save_freq: int = 10
-    load_model: str = ""  # Model load file name, "" doesn't load
+    checkpoint_path: str = "/home/jim/Documents/Projects/MAgent2/saves/naive_single_size30__naive_single__5__2025-05-05_19-16-18/checkpoint_200.pt"  # Model load file name, "" doesn't load
+    # checkpoint_path: str = "/home/jim/Documents/Projects/MAgent2/saves/naive_mappo_size40__naive_mappo__5__2025-05-05_22-33-51/checkpoint_1050.pt"  # Model load file name, "" doesn't load
+    config_file: str = "/home/jim/Documents/Projects/MAgent2/saves/naive_single_size30__naive_single__5__2025-05-05_19-16-18/config.yaml"  # Model load file name, "" doesn't load
+    # config_file: str = "/home/jim/Documents/Projects/MAgent2/saves/naive_mappo_size40__naive_mappo__5__2025-05-05_22-33-51/config.yaml"  # Model load file name, "" doesn't load
 
     # Algorithm specific arguments
-    env_id: str = "naive_single"
+    env_id: str = "naive_multi"
     """the id of the environment"""
     map_size: int = 25
     """map_size"""
@@ -182,6 +186,10 @@ if __name__ == "__main__":
     if args.checkpoints_path is not None:
         args.checkpoints_path = os.path.join(args.checkpoints_path, run_name)
 
+    if args.config_file is not None:
+        print(f"yaml path: {args.config_file}")
+        with open(args.config_file, "r") as f:
+            config_dict = yaml.safe_load(f)
     if args.use_wandb:
         wandb.init(
             project=args.wandb_project_name,
@@ -218,7 +226,7 @@ if __name__ == "__main__":
     iteration = 0
     do_nothing = 6
     env.reset()
-    agent_names = env.actors.copy()
+    agent_names = env.agents.copy()
     red_agents = [agent_name for agent_name in agent_names if 'red' in agent_name]
     agents = {}
     optimizers = {}
@@ -227,6 +235,9 @@ if __name__ == "__main__":
     last_state = {}
     last_action = {}
     returns = {}
+
+    # Define the codec and create a VideoWriter object
+
     """ setup agent buffer and initial observations """
     for agent_name in agent_names:
         agents[agent_name] = IppoAgent(env, agent_name, args.n_hidden, channel_last=True).to(device)
@@ -244,24 +255,23 @@ if __name__ == "__main__":
         buffers[agent_name] = buffer
         total_reward[agent_name] = 0
 
-    if args.checkpoints_path is not None:
-        print(f"Checkpoints path: {args.checkpoints_path}")
-        os.makedirs(args.checkpoints_path, exist_ok=True)
-        with open(os.path.join(args.checkpoints_path, "config.yaml"), "w") as f:
-            yaml.dump(args, f)
+    if args.checkpoint_path is not None:
+        print(f"Checkpoints path: {args.checkpoint_path}")
+        print(f"yaml path: {args.config_file}")
+        with open(args.config_file, "r") as f:
+            config_dict = yaml.safe_load(f)
+        checkpoint = torch.load(args.checkpoint_path, weights_only=True)
+        for agent_name in red_agents:
+            agents[agent_name].load_state_dict(checkpoint[agent_name])
+            agents[agent_name].eval()
 
     global_step = 0
     step = 0
     start_time = time.time()
-    while global_step < args.total_timesteps:
+    while iteration < 5:
         print(f"====== iteration {iteration} ======")
-        if args.render:
-            if iteration % args.render_freq == 0:
-                env_name = "render_env"
-                env = render_env
-            else:
-                env_name = "rgb_env"
-                env = rgb_env
+        env_name = "rgb_env"
+        env = rgb_env
         for agent_name in agent_names:
             total_reward[agent_name] = 0
             if args.anneal_lr:
@@ -271,21 +281,20 @@ if __name__ == "__main__":
         advantages = {}
         returns = {}
         blue_truncation, blue_termination = False, False
-        while step < args.num_steps:
+        frame_list = []  # For creating a gif
+        while iteration < 5:
             total_reward[red_agents[0]] = 0
             env.reset()
             # print("env reset", env_name)
-            frame_list = []  # For creating a gif
             for agent_name in env.agent_iter():
+                image = Image.fromarray(env.render())
+                frame_list.append(image)
                 # if blue_truncation or blue_termination:
                     # print("blue agent", blue_truncation, blue_termination)
                 if step == args.num_steps:
                     for key in env.truncations:
                         env.truncations[key] = True
                     break
-                if args.render:
-                    if episodes % args.render_freq == 0:
-                        frame_list.append(env.render())
                 # skip blue agents
                 if "blue" in agent_name or "blue" in env.agent_selection:
                     blue_observation, blue_reward, blue_termination, blue_truncation, info = env.last()
@@ -296,6 +305,7 @@ if __name__ == "__main__":
                     else:
                         env.step(do_nothing)
                         continue
+
                 observation, reward, termination, truncation, info = env.last()
                 # print(agent_name, step, termination, truncation, info)
                 observation = get_custom_obs(observation, r=args.observation_radius)
@@ -343,7 +353,9 @@ if __name__ == "__main__":
             if args.render:
                 env.close()
             env.reset()
-
+            iteration += 1
+        frame_list[0].save(f'{args.exp_name}_{env_name}_out.gif', save_all=True, append_images=frame_list[1:], duration=3,
+                           loop=0)
         for agent_name in red_agents:
             if len(env.terminations) < 2:
                 print("warning env.terminations dict less than 2", env.terminations)
@@ -352,89 +364,6 @@ if __name__ == "__main__":
                 terminal, truncated = env.terminations[agent_name], env.truncations[agent_name]
                 terminal_or_truncated = int(np.logical_or(terminal, truncated))
             advantages[agent_name], returns[agent_name] = calculate_returns(terminal_or_truncated, buffers, agent_name)
-        # Optimizing the policy and value network
-        b_inds = np.arange(args.batch_size)
-        clipfracs = []
-        for epoch in range(args.update_epochs):
-            np.random.shuffle(b_inds)
-            for agent_name in red_agents:
-                for start in range(0, args.batch_size, args.minibatch_size):
-                    end = start + args.minibatch_size
-                    mb_inds = b_inds[start:end]
 
-                    _, newlogprob, entropy, newvalue = agents[agent_name].get_action_and_value(
-                        buffers[agent_name]["obs"][mb_inds], buffers[agent_name]["actions"][mb_inds])
-                    logratio = newlogprob - buffers[agent_name]["logprobs"][mb_inds]
-                    ratio = logratio.exp()
-
-                    with torch.no_grad():
-                        # calculate approx_kl http://joschu.net/blog/kl-approx.html
-                        old_approx_kl = (-logratio).mean()
-                        approx_kl = ((ratio - 1) - logratio).mean()
-                        clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
-
-                    mb_advantages = advantages[agent_name][mb_inds]
-                    if args.norm_adv:
-                        mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
-
-                    # Policy loss
-                    pg_loss1 = -mb_advantages * ratio
-                    pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
-                    pg_loss = torch.max(pg_loss1, pg_loss2).mean()
-
-                    # Value loss
-                    newvalue = newvalue.view(-1)
-                    if args.clip_vloss:
-                        v_loss_unclipped = (newvalue - returns[agent_name][mb_inds]) ** 2
-                        v_clipped = buffers[agent_name]["values"][mb_inds] + torch.clamp(
-                            newvalue - buffers[agent_name]["values"][mb_inds],
-                            -args.clip_coef,
-                            args.clip_coef,
-                        )
-                        v_loss_clipped = (v_clipped - returns[agent_name][mb_inds]) ** 2
-                        v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
-                        v_loss = 0.5 * v_loss_max.mean()
-                    else:
-                        v_loss = 0.5 * ((newvalue - returns[agent_name][mb_inds]) ** 2).mean()
-
-                    entropy_loss = entropy.mean()
-                    loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
-
-                    optimizers[agent_name].zero_grad()
-                    loss.backward()
-                    nn.utils.clip_grad_norm_(agents[agent_name].parameters(), args.max_grad_norm)
-                    optimizers[agent_name].step()
-
-                if args.target_kl is not None and approx_kl > args.target_kl:
-                    break
-        for agent_name in red_agents:
-            y_pred, y_true = buffers[agent_name]["values"].cpu().numpy(), returns[agent_name].cpu().numpy()
-            var_y = np.var(y_true)
-            explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
-
-            # TRY NOT TO MODIFY: record rewards for plotting purposes
-            writer.add_scalar(f"Charts/{agent_name}_learning_rate", optimizers[agent_name].param_groups[0]["lr"],
-                              global_step)
-            writer.add_scalar(f"losses/{agent_name}_value_loss", v_loss.item(), global_step)
-            print(f"losses/{agent_name}_value_loss, {v_loss.item():.3f}, global step {global_step}")
-            writer.add_scalar(f"losses/{agent_name}_policy_loss", pg_loss.item(), global_step)
-            print(f"losses/{agent_name}_policy_loss {pg_loss.item():.3f}, global step {global_step}")
-            writer.add_scalar(f"losses/{agent_name}_entropy", entropy_loss.item(), global_step)
-            writer.add_scalar(f"losses/{agent_name}_old_approx_kl", old_approx_kl.item(), global_step)
-            writer.add_scalar(f"losses/{agent_name}_approx_kl", approx_kl.item(), global_step)
-            writer.add_scalar(f"losses/{agent_name}_clipfrac", np.mean(clipfracs), global_step)
-            writer.add_scalar(f"losses/{agent_name}_explained_variance", explained_var, global_step)
-        print("SPS:", int(global_step / (time.time() - start_time)))
-        writer.add_scalar(f"Charts/SPS", int(global_step / (time.time() - start_time)), global_step)
         iteration += 1
         step = 0
-
-        if args.checkpoints_path:
-            if iteration % args.save_freq == 0:
-                save_dict = {}
-                for agent_name in red_agents:
-                    save_dict[f"{agent_name}"] = agents[agent_name].state_dict()
-                torch.save(
-                    save_dict,
-                    os.path.join(args.checkpoints_path, f"checkpoint_{iteration}.pt"),
-                )

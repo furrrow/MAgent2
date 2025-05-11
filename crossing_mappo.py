@@ -5,8 +5,8 @@ import random
 import numpy as np
 import yaml
 import wandb
-from agents.ppo_agent import IppoAgent
-from magent2.environments.custom_map import naive_multi, four_way
+from agents.ppo_agent import CentralCritic, DecentActor
+from magent2.environments.custom_map import naive_multi, crossing
 import time
 import tyro
 from dataclasses import dataclass
@@ -15,6 +15,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
+from PIL import Image
 """
 attacking without hitting the target does not appear to give rewards
 """
@@ -59,26 +60,26 @@ class Args:
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
     cuda: bool = False
     """if toggled, cuda will be enabled by default"""
-    use_wandb: bool = False
+    use_wandb: bool = True
     """if toggled, this experiment will be tracked with Weights and Biases"""
     wandb_project_name: str = "RL"
     """the wandb's project name"""
     wandb_entity: str = "jianyu34-university-of-maryland"
     """the entity (team) of wandb's project"""
-    capture_video: bool = True
+    capture_video: bool = False
     """whether to capture videos of the agent performances (check out `videos` folder)"""
-    render: bool = False
-    render_freq: int = 2
+    render: bool = True
+    render_freq: int = 10
     checkpoints_path: str = "./saves"  # Save path
     save_freq: int = 10
     load_model: str = ""  # Model load file name, "" doesn't load
 
     # Algorithm specific arguments
-    env_id: str = "naive_single"
+    env_id: str = "crossing_mappo_team4"
     """the id of the environment"""
-    map_size: int = 25
+    map_size: int = 70
     """map_size"""
-    n_agents: int = 1
+    n_agents: int = 4
     """the number of red agents in the map"""
     distance_threshold: int = 3
     """how close does the red agent need to get to the blue agent to count as success"""
@@ -171,6 +172,18 @@ def get_custom_obs(observation, r = 6, key_idx = 1):
     observation = observation * mask
     return observation
 
+def get_all_custom_obs(env, agent_list, device, r):
+    """
+    get all observations for the centralized critic
+    """
+    all_observations = []
+    for name in agent_list:
+        raw_obs = env.observe(name)
+        custom_obs = (get_custom_obs(raw_obs, r))
+        custom_obs = torch.swapaxes(torch.Tensor(custom_obs).to(device), 0, 2).unsqueeze(0)
+        all_observations.append(custom_obs)
+    return all_observations
+
 if __name__ == "__main__":
     args = tyro.cli(Args)
     args.batch_size = int(args.num_envs * args.num_steps)
@@ -210,18 +223,19 @@ if __name__ == "__main__":
 
     # env = battle_v4.env(render_mode='human')
     # env = battlefield.env(render_mode='human')
-    rgb_env = naive_multi.env(map_size=args.map_size, n_red_agents=args.n_agents, render_mode='rgb_array')
-    render_env = naive_multi.env(map_size=args.map_size, n_red_agents=args.n_agents, render_mode='human')
+    rgb_env = crossing.env(map_size=args.map_size, n_red_agents=args.n_agents, render_mode='rgb_array')
+    # render_env = crossing.env(map_size=args.map_size, n_red_agents=args.n_agents, render_mode='human')
     env = rgb_env
-    env_name = "rgb_env"
     episodes = 0
     iteration = 0
     do_nothing = 6
     env.reset()
-    agent_names = env.actors.copy()
+    agent_names = env.agents.copy()
     red_agents = [agent_name for agent_name in agent_names if 'red' in agent_name]
-    agents = {}
-    optimizers = {}
+    actors = {}
+    critics = {}
+    actor_optimizers = {}
+    critic_optimizers = {}
     buffers = {}
     total_reward = {}
     last_state = {}
@@ -229,8 +243,10 @@ if __name__ == "__main__":
     returns = {}
     """ setup agent buffer and initial observations """
     for agent_name in agent_names:
-        agents[agent_name] = IppoAgent(env, agent_name, args.n_hidden, channel_last=True).to(device)
-        optimizers[agent_name] = optim.Adam(agents[agent_name].parameters(), lr=args.learning_rate, eps=1e-5)
+        actors[agent_name] = DecentActor(env, agent_name, args.n_hidden).to(device)
+        critics[agent_name] = CentralCritic(env, red_agents, args.n_hidden, 5*len(red_agents)).to(device)
+        actor_optimizers[agent_name] = optim.Adam(actors[agent_name].parameters(), lr=args.learning_rate, eps=1e-5)
+        critic_optimizers[agent_name] = optim.Adam(critics[agent_name].parameters(), lr=args.learning_rate, eps=1e-5)
         obs_space_shape_swapped = env.observation_space(agent_name).shape
         obs_space_shape_swapped = list(obs_space_shape_swapped)[::-1]
         buffer = {
@@ -255,56 +271,52 @@ if __name__ == "__main__":
     start_time = time.time()
     while global_step < args.total_timesteps:
         print(f"====== iteration {iteration} ======")
-        if args.render:
-            if iteration % args.render_freq == 0:
-                env_name = "render_env"
-                env = render_env
-            else:
-                env_name = "rgb_env"
-                env = rgb_env
+        # if args.render:
+        #     if iteration % args.render_freq == 0:
+        #         env = render_env
+        #     else:
+        env = rgb_env
         for agent_name in agent_names:
             total_reward[agent_name] = 0
             if args.anneal_lr:
                 frac = 1.0 - (iteration - 1.0) / args.num_iterations
                 lrnow = frac * args.learning_rate
-                optimizers[agent_name].param_groups[0]["lr"] = lrnow
+                actor_optimizers[agent_name].param_groups[0]["lr"] = lrnow
+                critic_optimizers[agent_name].param_groups[0]["lr"] = lrnow
         advantages = {}
         returns = {}
-        blue_truncation, blue_termination = False, False
         while step < args.num_steps:
             total_reward[red_agents[0]] = 0
             env.reset()
-            # print("env reset", env_name)
             frame_list = []  # For creating a gif
             for agent_name in env.agent_iter():
-                # if blue_truncation or blue_termination:
-                    # print("blue agent", blue_truncation, blue_termination)
                 if step == args.num_steps:
                     for key in env.truncations:
                         env.truncations[key] = True
                     break
                 if args.render:
                     if episodes % args.render_freq == 0:
-                        frame_list.append(env.render())
+                        image = Image.fromarray(env.render())
+                        frame_list.append(image)
                 # skip blue agents
                 if "blue" in agent_name or "blue" in env.agent_selection:
-                    blue_observation, blue_reward, blue_termination, blue_truncation, info = env.last()
-                    # print(agent_name, step, blue_termination, blue_truncation, info)
-                    if blue_termination or blue_truncation:
+                    observation, reward, termination, truncation, info = env.last()
+                    if termination or truncation:
+                        # print(agent_name, step, termination, truncation, info)
                         env.step(None)
                         continue
                     else:
                         env.step(do_nothing)
                         continue
-                observation, reward, termination, truncation, info = env.last()
-                # print(agent_name, step, termination, truncation, info)
-                observation = get_custom_obs(observation, r=args.observation_radius)
-                old_rwd = reward
                 try:
                     state = env.state()
                 except:
                     print("error in retrieving state, resetting state...")
                     env.reset()
+                obs_all_tensor = get_all_custom_obs(env, red_agents, device=device, r=args.observation_radius)
+                observation, reward, termination, truncation, info = env.last()
+                observation = get_custom_obs(observation, r=args.observation_radius)
+                old_rwd = reward
                 reward = get_custom_reward(env, args.distance_threshold)
                 if reward > 2:
                     termination = True
@@ -321,16 +333,17 @@ if __name__ == "__main__":
 
                 # ALGO LOGIC: action logic
                 with torch.no_grad():
-                    action, logprob, _, value = agents[agent_name].get_action_and_value(obs_agent.unsqueeze(0))
+                    action, logprob, entropy = actors[agent_name].get_action(obs_agent.unsqueeze(0))
+                    value = critics[agent_name].get_value(torch.stack(obs_all_tensor))
                 buffers[agent_name]["values"][step] = value.flatten()
                 buffers[agent_name]["actions"][step] = action
                 buffers[agent_name]["logprobs"][step] = logprob
-                print(agent_name, step, termination, truncation, action, action_dict[int(action)])
+                # print(agent_name, step, termination, truncation, action, action_dict[int(action)])
                 terminal_or_truncated = int(np.logical_or(termination, truncation))
                 buffers[agent_name]['dones'][step] = torch.Tensor([terminal_or_truncated]).to(device)
 
                 if termination or truncation:
-                    print(f"episode {episodes} total_reward {total_reward[agent_name]:.4f}")
+                    # print(f"episode {episodes} total_reward {total_reward[agent_name]:.4f}")
                     writer.add_scalar(f"Charts/{agent_name}_total_rwd", total_reward[agent_name], global_step)
                     env.step(None)
                 else:
@@ -342,9 +355,13 @@ if __name__ == "__main__":
             writer.add_scalar(f"Charts/episode", episodes, global_step)
             if args.render:
                 env.close()
-            env.reset()
+                env.reset()
+                if len(frame_list) > 0:
+                    frame_list[0].save(f'{args.checkpoints_path}/iter{iteration}_out.gif', save_all=True,
+                                       append_images=frame_list[1:], duration=5, loop=0)
 
         for agent_name in red_agents:
+            writer.add_scalar(f"Charts/{agent_name}_total_rwd", total_reward[agent_name], global_step)
             if len(env.terminations) < 2:
                 print("warning env.terminations dict less than 2", env.terminations)
                 terminal_or_truncated = int(True)
@@ -362,7 +379,7 @@ if __name__ == "__main__":
                     end = start + args.minibatch_size
                     mb_inds = b_inds[start:end]
 
-                    _, newlogprob, entropy, newvalue = agents[agent_name].get_action_and_value(
+                    _, newlogprob, entropy = actors[agent_name].get_action(
                         buffers[agent_name]["obs"][mb_inds], buffers[agent_name]["actions"][mb_inds])
                     logratio = newlogprob - buffers[agent_name]["logprobs"][mb_inds]
                     ratio = logratio.exp()
@@ -381,9 +398,17 @@ if __name__ == "__main__":
                     pg_loss1 = -mb_advantages * ratio
                     pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
                     pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+                    actor_optimizers[agent_name].zero_grad()
+                    pg_loss.backward()
+                    nn.utils.clip_grad_norm_(actors[agent_name].parameters(), args.max_grad_norm)
+                    actor_optimizers[agent_name].step()
 
                     # Value loss
-                    newvalue = newvalue.view(-1)
+                    _, newlogprob, entropy = actors[agent_name].get_action(
+                        buffers[agent_name]["obs"][mb_inds], buffers[agent_name]["actions"][mb_inds])
+                    all_buffer_obs = [buffers[agent_name]["obs"][mb_inds] for agent_name in red_agents]
+                    newvalue = critics[agent_name].get_value(torch.stack(all_buffer_obs)).squeeze(-1)
+                    # newvalue = newvalue.view(-1)
                     if args.clip_vloss:
                         v_loss_unclipped = (newvalue - returns[agent_name][mb_inds]) ** 2
                         v_clipped = buffers[agent_name]["values"][mb_inds] + torch.clamp(
@@ -398,12 +423,13 @@ if __name__ == "__main__":
                         v_loss = 0.5 * ((newvalue - returns[agent_name][mb_inds]) ** 2).mean()
 
                     entropy_loss = entropy.mean()
-                    loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
+                    # loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
+                    loss = - args.ent_coef * entropy_loss + v_loss * args.vf_coef
 
-                    optimizers[agent_name].zero_grad()
+                    critic_optimizers[agent_name].zero_grad()
                     loss.backward()
-                    nn.utils.clip_grad_norm_(agents[agent_name].parameters(), args.max_grad_norm)
-                    optimizers[agent_name].step()
+                    nn.utils.clip_grad_norm_(critics[agent_name].parameters(), args.max_grad_norm)
+                    critic_optimizers[agent_name].step()
 
                 if args.target_kl is not None and approx_kl > args.target_kl:
                     break
@@ -413,7 +439,7 @@ if __name__ == "__main__":
             explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
             # TRY NOT TO MODIFY: record rewards for plotting purposes
-            writer.add_scalar(f"Charts/{agent_name}_learning_rate", optimizers[agent_name].param_groups[0]["lr"],
+            writer.add_scalar(f"Charts/{agent_name}_learning_rate", critic_optimizers[agent_name].param_groups[0]["lr"],
                               global_step)
             writer.add_scalar(f"losses/{agent_name}_value_loss", v_loss.item(), global_step)
             print(f"losses/{agent_name}_value_loss, {v_loss.item():.3f}, global step {global_step}")
@@ -433,7 +459,7 @@ if __name__ == "__main__":
             if iteration % args.save_freq == 0:
                 save_dict = {}
                 for agent_name in red_agents:
-                    save_dict[f"{agent_name}"] = agents[agent_name].state_dict()
+                    save_dict[f"{agent_name}"] = actors[agent_name].state_dict()
                 torch.save(
                     save_dict,
                     os.path.join(args.checkpoints_path, f"checkpoint_{iteration}.pt"),

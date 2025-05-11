@@ -4,14 +4,15 @@ import numpy as np
 from pettingzoo.utils.env import AECEnv
 
 from agents.dummy_agent import DummyAgent
-from magent2.environments.custom_map import battlefield, naive_multi, four_way
+from magent2.environments.custom_map import battlefield, naive_multi, four_way, crossing
 from agents import dummy_agent
 import time
 
 # env = battle_v4.env(render_mode='human')
 # env = battlefield.env(render_mode='human')
+env = crossing.env(render_mode='human')
 # env = naive.env(render_mode='human')
-env = four_way.env(render_mode='human')
+# env = four_way.env(render_mode='human')
 """
 actions for battlefield env:
 0: formation up

@@ -4,8 +4,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.normal import Normal
 from torch.distributions.categorical import Categorical
-from torch_geometric.data import Data
-from torch_geometric.nn import GCNConv
+# from torch_geometric.data import Data
+# from torch_geometric.nn import GCNConv
 
 def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     torch.nn.init.orthogonal_(layer.weight, std)

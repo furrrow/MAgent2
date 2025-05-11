@@ -15,6 +15,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
+from PIL import Image
 """
 attacking without hitting the target does not appear to give rewards
 """
@@ -268,7 +269,6 @@ if __name__ == "__main__":
     global_step = 0
     step = 0
     start_time = time.time()
-    frame_list = []  # For creating a gif
     while global_step < args.total_timesteps:
         print(f"====== iteration {iteration} ======")
         if args.render:
@@ -285,17 +285,22 @@ if __name__ == "__main__":
                 critic_optimizers[agent_name].param_groups[0]["lr"] = lrnow
         advantages = {}
         returns = {}
+        frame_list = []  # For creating a gif
         while step < args.num_steps:
             total_reward[red_agents[0]] = 0
             env.reset()
             for agent_name in env.agent_iter():
+
+                # if blue_truncation or blue_termination:
+                    # print("blue agent", blue_truncation, blue_termination)
                 if step == args.num_steps:
                     for key in env.truncations:
                         env.truncations[key] = True
                     break
                 if args.render:
                     if episodes % args.render_freq == 0:
-                        env.render()
+                        image = Image.fromarray(env.render())
+                        frame_list.append(image)
                 # skip blue agents
                 if "blue" in agent_name or "blue" in env.agent_selection:
                     observation, reward, termination, truncation, info = env.last()
