@@ -6,7 +6,7 @@ import numpy as np
 import yaml
 import wandb
 from agents.ppo_agent import IppoAgent
-from magent2.environments.custom_map import naive_multi, four_way
+from magent2.environments.custom_map import naive_multi
 import time
 import tyro
 from dataclasses import dataclass
@@ -15,39 +15,14 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
+from PIL import Image
+from utils import get_custom_obs, get_all_custom_obs, get_custom_reward, calculate_returns
+from utils import action_dict, custom_actions
+
 """
 attacking without hitting the target does not appear to give rewards
 """
-action_dict = {
-    0: "up_2",
-    1: "up_left",
-    2: "up",
-    3: "upright",
-    4: "left_2",
-    5: "left",
-    6: "nothing",
-    7: "right",
-    8: "right_2",
-    9: "down_left",
-    10: "down",
-    11: "down_right",
-    12: "down_2",
-    13: "attack_topleft",
-    14: "attack_up",
-    15: "attack_top_right",
-    16: "attack_left",
-    17: "attack_right",
-    18: "attack_bottom_left",
-    19: "attack_bottom",
-    20: "attack_bottom_right",
-}
-obs_keys = {
-    0: "obstacle_map",
-    1: "team_0_presence",
-    2: "team_0_hp",
-    3: "team_1_presence",
-    4: "team_1_hp",
-}
+
 
 @dataclass
 class Args:
@@ -59,18 +34,18 @@ class Args:
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
     cuda: bool = False
     """if toggled, cuda will be enabled by default"""
-    use_wandb: bool = False
+    use_wandb: bool = True
     """if toggled, this experiment will be tracked with Weights and Biases"""
     wandb_project_name: str = "RL"
     """the wandb's project name"""
     wandb_entity: str = "jianyu34-university-of-maryland"
     """the entity (team) of wandb's project"""
-    capture_video: bool = True
+    capture_video: bool = False
     """whether to capture videos of the agent performances (check out `videos` folder)"""
     render: bool = False
-    render_freq: int = 2
+    render_freq: int = 15
     checkpoints_path: str = "./saves"  # Save path
-    save_freq: int = 10
+    save_freq: int = 50
     load_model: str = ""  # Model load file name, "" doesn't load
 
     # Algorithm specific arguments
@@ -127,50 +102,6 @@ class Args:
     num_iterations: int = 0
     """the number of iterations (computed in runtime)"""
 
-def calculate_returns(terminal_or_truncated, buffers, agent_name):
-    advantages = torch.zeros_like(buffers[agent_name]['rewards']).to(device)
-    lastgaelam = 0
-    for t in reversed(range(step)):
-        if t == args.num_steps - 1:
-            nextnonterminal = 1.0 - terminal_or_truncated
-            nextvalues = value
-        else:
-            nextnonterminal = 1.0 - buffers[agent_name]['dones'][t + 1]
-            nextvalues = buffers[agent_name]['values'][t + 1]
-        delta = buffers[agent_name]['rewards'][t] + args.gamma * nextvalues * nextnonterminal - \
-                buffers[agent_name]['values'][t]
-        advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
-    returns = advantages + buffers[agent_name]['values']
-    return advantages, returns
-
-def get_custom_reward(env, threshold = 3):
-    team_0_state = env.state()[:, :, 1]
-    team_1_state = env.state()[:, :, 3]
-    team0_y, team0_x = np.nonzero(team_0_state)
-    team1_y, team1_x = np.nonzero(team_1_state)
-    team_0_locs = np.array([team0_x, team0_y]).T
-    team_1_locs = np.array([team1_x, team1_y]).T
-    distance = team_0_locs - team_1_locs
-    norm_distance = np.linalg.norm(distance, axis=1)
-    custom_reward = - min(norm_distance)
-    if min(norm_distance) < threshold:
-        custom_reward = 1000
-    return np.float64(custom_reward) / 10
-
-def get_custom_obs(observation, r = 6, key_idx = 1):
-    """
-    script to artificially limit field of view.
-    agent should be centered around idx (6, 6) so put a mask around it.
-    """
-    init_r = observation.shape[0]
-    assert (r*2 + 1) <= init_r
-    mask = np.zeros(observation.shape)
-    low = 6 - r
-    high = 6 + r + 1
-    mask[low:high, low:high, :] = 1
-    observation = observation * mask
-    return observation
-
 if __name__ == "__main__":
     args = tyro.cli(Args)
     args.batch_size = int(args.num_envs * args.num_steps)
@@ -218,7 +149,7 @@ if __name__ == "__main__":
     iteration = 0
     do_nothing = 6
     env.reset()
-    agent_names = env.actors.copy()
+    agent_names = env.agents.copy()
     red_agents = [agent_name for agent_name in agent_names if 'red' in agent_name]
     agents = {}
     optimizers = {}
@@ -229,7 +160,10 @@ if __name__ == "__main__":
     returns = {}
     """ setup agent buffer and initial observations """
     for agent_name in agent_names:
-        agents[agent_name] = IppoAgent(env, agent_name, args.n_hidden, channel_last=True).to(device)
+        obs_space = env.observation_space(agent_name).shape
+        # action_size = env.action_space(agent_name).n
+        action_size = len(custom_actions)
+        agents[agent_name] = IppoAgent(obs_space, action_size, args.n_hidden, channel_last=True).to(device)
         optimizers[agent_name] = optim.Adam(agents[agent_name].parameters(), lr=args.learning_rate, eps=1e-5)
         obs_space_shape_swapped = env.observation_space(agent_name).shape
         obs_space_shape_swapped = list(obs_space_shape_swapped)[::-1]
@@ -285,12 +219,13 @@ if __name__ == "__main__":
                     break
                 if args.render:
                     if episodes % args.render_freq == 0:
-                        frame_list.append(env.render())
+                        image = Image.fromarray(env.render())
+                        frame_list.append(image)
                 # skip blue agents
                 if "blue" in agent_name or "blue" in env.agent_selection:
-                    blue_observation, blue_reward, blue_termination, blue_truncation, info = env.last()
-                    # print(agent_name, step, blue_termination, blue_truncation, info)
-                    if blue_termination or blue_truncation:
+                    observation, reward, termination, truncation, info = env.last()
+                    if termination or truncation:
+                        # print(agent_name, step, termination, truncation, info)
                         env.step(None)
                         continue
                     else:
@@ -325,7 +260,7 @@ if __name__ == "__main__":
                 buffers[agent_name]["values"][step] = value.flatten()
                 buffers[agent_name]["actions"][step] = action
                 buffers[agent_name]["logprobs"][step] = logprob
-                print(agent_name, step, termination, truncation, action, action_dict[int(action)])
+                # print(agent_name, step, termination, truncation, action, action_dict[custom_actions[int(action)]])
                 terminal_or_truncated = int(np.logical_or(termination, truncation))
                 buffers[agent_name]['dones'][step] = torch.Tensor([terminal_or_truncated]).to(device)
 
@@ -342,7 +277,10 @@ if __name__ == "__main__":
             writer.add_scalar(f"Charts/episode", episodes, global_step)
             if args.render:
                 env.close()
-            env.reset()
+                env.reset()
+                if len(frame_list) > 0:
+                    frame_list[0].save(f'{args.checkpoints_path}/iter{iteration}_out.gif', save_all=True,
+                                       append_images=frame_list[1:], duration=5, loop=0)
 
         for agent_name in red_agents:
             if len(env.terminations) < 2:
@@ -351,7 +289,8 @@ if __name__ == "__main__":
             else:
                 terminal, truncated = env.terminations[agent_name], env.truncations[agent_name]
                 terminal_or_truncated = int(np.logical_or(terminal, truncated))
-            advantages[agent_name], returns[agent_name] = calculate_returns(terminal_or_truncated, buffers, agent_name)
+            advantages[agent_name], returns[agent_name] = calculate_returns(
+                args, step, terminal_or_truncated, buffers, agent_name, value, device)
         # Optimizing the policy and value network
         b_inds = np.arange(args.batch_size)
         clipfracs = []

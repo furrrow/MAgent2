@@ -29,12 +29,12 @@ class GCN(torch.nn.Module):
         return F.log_softmax(x, dim=1)
 
 class IppoAgent(nn.Module):
-    def __init__(self, env, agent_name, n_hidden=64, n_channel=5, channel_last=False):
+    def __init__(self, n_obs, n_action, n_hidden=64, n_channel=5, channel_last=False):
         super().__init__()
         self.n_hidden = n_hidden
         self.channel_last = channel_last
-        self.obs_shape = env.observation_space(agent_name).shape
-        self.action_size = env.action_space(agent_name).n
+        self.obs_shape = n_obs
+        self.action_size = n_action
         self.conv_lin_size = (self.obs_shape[0] - 2) * (self.obs_shape[1] - 2) * self.n_hidden
         # self.conv_lin_size = 11
         self.dummy_msg = 0
@@ -48,7 +48,7 @@ class IppoAgent(nn.Module):
             layer_init(nn.Linear(1024, 512)),
             self.activation,
         )
-        self.actor = layer_init(nn.Linear(512, self.action_size), std=0.01)
+        self.actor = layer_init(nn.Linear(512, n_action), std=0.01)
         self.critic = layer_init(nn.Linear(512, 1), std=1)
 
     def get_value(self, x):
