@@ -280,10 +280,10 @@ if __name__ == "__main__":
                     env.step(None)
                 else:
                     env.step(custom_actions[int(action.cpu())])
-                step += 1
-                global_step += 1
                 if agent_name == red_agents[-1]:
                     recv_dict = send_dict.copy()
+                    step += 1
+                    global_step += 1
             episodes += 1
             writer.add_scalar(f"Charts/episode", episodes, global_step)
             if args.render:

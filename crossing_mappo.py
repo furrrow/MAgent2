@@ -33,7 +33,7 @@ class Args:
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
     cuda: bool = False
     """if toggled, cuda will be enabled by default"""
-    use_wandb: bool = False
+    use_wandb: bool = True
     """if toggled, this experiment will be tracked with Weights and Biases"""
     wandb_project_name: str = "RL"
     """the wandb's project name"""
@@ -41,15 +41,15 @@ class Args:
     """the entity (team) of wandb's project"""
 
     render: bool = True
-    render_freq: int = 10
+    render_freq: int = 50
     """ how often to render training runs """
-    eval_freq: int = 10
+    eval_freq: int = 50
     n_eval: int = 5
     """ how many loop to run per eval"""
-    capture_video: bool = False
+    capture_video: bool = True
     """whether to capture videos of the agent performances (check out `videos` folder)"""
     checkpoints_path: str = "./saves"  # Save path
-    save_freq: int = 10
+    save_freq: int = 50
     load_model: str = ""  # Model load file name, "" doesn't load
 
     # Algorithm specific arguments
