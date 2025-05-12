@@ -40,7 +40,7 @@ class Args:
     wandb_entity: str = "jianyu34-university-of-maryland"
     """the entity (team) of wandb's project"""
 
-    render: bool = True
+    render: bool = False
     render_freq: int = 10
     """ how often to render training runs """
     eval_freq: int = 10
@@ -261,7 +261,7 @@ if __name__ == "__main__":
                 # ALGO LOGIC: action logic
                 agent_idx = red_agents.index(agent_name)
                 recv_msg = [recv_dict[agent_i][agent_idx] for agent_i in red_agents]
-                recv_msg = torch.tensor(recv_msg)
+                recv_msg = torch.tensor(recv_msg).to(device)
                 with torch.no_grad():
                     action, msg_out, logprob, entropy = actors[agent_name].get_action(obs_agent.unsqueeze(0), recv_msg.unsqueeze(0))
                     value = critics[agent_name].get_value(torch.stack(obs_all_tensor), recv_msg.unsqueeze(0))
@@ -439,7 +439,7 @@ if __name__ == "__main__":
                     # ALGO LOGIC: action logic
                     agent_idx = red_agents.index(agent_name)
                     recv_msg = [recv_dict[agent_i][agent_idx] for agent_i in red_agents]
-                    recv_msg = torch.tensor(recv_msg)
+                    recv_msg = torch.tensor(recv_msg).to(device)
                     with torch.no_grad():
                         action, msg_out = actors[agent_name].get_greedy_action(obs_agent.unsqueeze(0), recv_msg.unsqueeze(0))
                         send_dict[agent_name] = msg_out[0].cpu().detach().numpy()
