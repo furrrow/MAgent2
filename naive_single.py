@@ -421,7 +421,6 @@ if __name__ == "__main__":
         iteration += 1
         step = 0
 
-
         if args.checkpoints_path:
             if iteration % args.save_freq == 0:
                 save_dict = {}

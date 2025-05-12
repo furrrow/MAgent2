@@ -72,12 +72,12 @@ class IppoAgent(nn.Module):
         return action
 
 class CentralCritic(nn.Module):
-    def __init__(self, env, agent_list, n_hidden=64, n_channel=5):
+    def __init__(self, obs_space, action_size, agent_list, n_hidden=64, n_channel=5):
         super().__init__()
         self.n_hidden = n_hidden
         self.n_agents = int(n_channel // 5)
-        self.observation_size_list = [env.observation_space(name).shape[0] for name in agent_list]
-        self.total_act_size = sum([env.action_space(name).n for name in agent_list])
+        self.observation_size_list = [obs_space for name in agent_list]
+        self.total_act_size = sum([action_size for name in agent_list])
         self.activation = nn.ReLU()
         self.network = nn.Sequential(
             layer_init(nn.Conv2d(n_channel, 32, 3, stride=2)),
@@ -98,11 +98,11 @@ class CentralCritic(nn.Module):
         return out
 
 class DecentActor(nn.Module):
-    def __init__(self, env, agent_name, n_hidden=64, n_channel=5):
+    def __init__(self, obs_space, action_space, n_hidden=64, n_channel=5):
         super().__init__()
         self.n_hidden = n_hidden
-        self.obs_shape = env.observation_space(agent_name).shape
-        self.action_size = env.action_space(agent_name).n
+        self.obs_shape = obs_space
+        self.action_size = action_space
         self.activation = nn.ReLU()
         self.network = nn.Sequential(
             layer_init(nn.Conv2d(n_channel, 32, 3, stride=2)),
@@ -113,7 +113,7 @@ class DecentActor(nn.Module):
             layer_init(nn.Linear(1024, 512)),
             self.activation,
         )
-        self.fc_mu = layer_init(nn.Linear(512, np.prod(env.action_space(agent_name).n)), std=0.01)
+        self.fc_mu = layer_init(nn.Linear(512, np.prod(action_space)), std=0.01)
 
     def get_action(self, x, action=None):
         hidden = self.network(x)
@@ -122,6 +122,12 @@ class DecentActor(nn.Module):
         if action is None:
             action = probs.sample()
         return action, probs.log_prob(action), probs.entropy()
+
+    def get_greedy_action(self, x):
+        hidden = self.network(x)
+        logits = self.fc_mu(hidden)
+        action = torch.argmax(logits, dim=1)
+        return action
 
 class MessageActor(nn.Module):
     def __init__(self, env, agent_name, n_agents, n_hidden=64, n_channel=5):
