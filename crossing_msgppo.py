@@ -33,7 +33,7 @@ class Args:
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
     cuda: bool = False
     """if toggled, cuda will be enabled by default"""
-    use_wandb: bool = False
+    use_wandb: bool = True
     """if toggled, this experiment will be tracked with Weights and Biases"""
     wandb_project_name: str = "RL"
     """the wandb's project name"""
@@ -41,15 +41,15 @@ class Args:
     """the entity (team) of wandb's project"""
 
     render: bool = False
-    render_freq: int = 10
+    render_freq: int = 50
     """ how often to render training runs """
-    eval_freq: int = 10
+    eval_freq: int = 50
     n_eval: int = 5
     """ how many loop to run per eval"""
-    capture_video: bool = False
+    capture_video: bool = True
     """whether to capture videos of the agent performances (check out `videos` folder)"""
     checkpoints_path: str = "./saves"  # Save path
-    save_freq: int = 10
+    save_freq: int = 50
     load_model: str = ""  # Model load file name, "" doesn't load
 
     # Algorithm specific arguments
@@ -400,10 +400,10 @@ if __name__ == "__main__":
                 total_reward[i_name] = 0
                 send_dict[i_name] = [0.0] * len(red_agents)
                 recv_dict[i_name] = [0.0] * len(red_agents)
-            for _ in range(n_eval):
+            for n_e in range(n_eval):
                 env.reset()
                 for agent_name in env.agent_iter():
-                    if args.capture_video:
+                    if args.capture_video and n_e == 0: # only render first loop
                         image = Image.fromarray(env.render())
                         frame_list.append(image)
                     # skip blue agents
