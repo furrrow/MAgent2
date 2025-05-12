@@ -31,7 +31,7 @@ class Args:
     """seed of the experiment"""
     torch_deterministic: bool = True
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
-    cuda: bool = False
+    cuda: bool = True
     """if toggled, cuda will be enabled by default"""
     use_wandb: bool = True
     """if toggled, this experiment will be tracked with Weights and Biases"""
@@ -40,7 +40,7 @@ class Args:
     wandb_entity: str = "jianyu34-university-of-maryland"
     """the entity (team) of wandb's project"""
 
-    render: bool = True
+    render: bool = False
     render_freq: int = 50
     """ how often to render training runs """
     eval_freq: int = 50
@@ -377,10 +377,10 @@ if __name__ == "__main__":
             n_eval = args.n_eval
             for agent_name in agent_names:
                 total_reward[agent_name] = 0
-            for _ in range(n_eval):
+            for n_e in range(n_eval):
                 env.reset()
                 for agent_name in env.agent_iter():
-                    if args.capture_video:
+                    if args.capture_video and n_e == 0: # only render first loop
                         image = Image.fromarray(env.render())
                         frame_list.append(image)
                     # skip blue agents
