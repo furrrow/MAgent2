@@ -57,7 +57,7 @@ class Args:
     """the id of the environment"""
     map_size: int = 40
     """map_size"""
-    n_agents: int = 2
+    n_agents: int = 3
     """the number of red agents in the map"""
     distance_threshold: int = 3
     """how close does the red agent need to get to the blue agent to count as success"""
@@ -113,7 +113,7 @@ if __name__ == "__main__":
     args.num_iterations = args.total_timesteps // args.batch_size
     now = datetime.datetime.now()
     timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
-    run_name = f"{args.env_id}__size{args.map_size}__{args.seed}__{timestamp}"
+    run_name = f"{args.env_id}__size{args.map_size}__{args.n_agents}agents__{timestamp}"
     if args.checkpoints_path is not None:
         args.checkpoints_path = os.path.join(args.checkpoints_path, run_name)
 
@@ -268,8 +268,9 @@ if __name__ == "__main__":
                     env.step(None)
                 else:
                     env.step(custom_actions[int(action.cpu())])
-                step += 1
-                global_step += 1
+                if agent_name == red_agents[-1]:
+                    step += 1
+                    global_step += 1
             episodes += 1
             writer.add_scalar(f"Charts/episode", episodes, global_step)
             if args.render:

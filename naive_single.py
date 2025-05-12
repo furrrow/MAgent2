@@ -34,7 +34,7 @@ class Args:
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
     cuda: bool = False
     """if toggled, cuda will be enabled by default"""
-    use_wandb: bool = False
+    use_wandb: bool = True
     """if toggled, this experiment will be tracked with Weights and Biases"""
     wandb_project_name: str = "RL"
     """the wandb's project name"""
@@ -42,9 +42,9 @@ class Args:
     """the entity (team) of wandb's project"""
 
     render: bool = True
-    render_freq: int = 10
+    render_freq: int = 50
     """ how often to render training runs """
-    eval_freq: int = 10
+    eval_freq: int = 50
     n_eval: int = 5
     """ how many loop to run per eval"""
     capture_video: bool = True
@@ -56,7 +56,7 @@ class Args:
     # Algorithm specific arguments
     env_id: str = "naive_single"
     """the id of the environment"""
-    map_size: int = 25
+    map_size: int = 40
     """map_size"""
     n_agents: int = 1
     """the number of red agents in the map"""

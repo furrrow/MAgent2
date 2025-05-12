@@ -113,7 +113,7 @@ if __name__ == "__main__":
     args.num_iterations = args.total_timesteps // args.batch_size
     now = datetime.datetime.now()
     timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
-    run_name = f"{args.env_id}__size{args.map_size}__{args.seed}__{timestamp}"
+    run_name = f"{args.env_id}__size{args.map_size}__{args.n_agents}agents__{timestamp}"
     if args.checkpoints_path is not None:
         args.checkpoints_path = os.path.join(args.checkpoints_path, run_name)
 

@@ -16,8 +16,9 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 from PIL import Image
-from utils import get_custom_obs, get_all_custom_obs, get_custom_reward, calculate_returns
+from utils import get_custom_obs, get_all_custom_obs, square_distance_reward, calculate_returns
 from utils import action_dict, custom_actions
+
 """
 attacking without hitting the target does not appear to give rewards
 """
@@ -32,22 +33,27 @@ class Args:
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
     cuda: bool = False
     """if toggled, cuda will be enabled by default"""
-    use_wandb: bool = True
+    use_wandb: bool = False
     """if toggled, this experiment will be tracked with Weights and Biases"""
     wandb_project_name: str = "RL"
     """the wandb's project name"""
     wandb_entity: str = "jianyu34-university-of-maryland"
     """the entity (team) of wandb's project"""
-    capture_video: bool = False
-    """whether to capture videos of the agent performances (check out `videos` folder)"""
+
     render: bool = True
     render_freq: int = 10
+    """ how often to render training runs """
+    eval_freq: int = 10
+    n_eval: int = 5
+    """ how many loop to run per eval"""
+    capture_video: bool = False
+    """whether to capture videos of the agent performances (check out `videos` folder)"""
     checkpoints_path: str = "./saves"  # Save path
     save_freq: int = 10
     load_model: str = ""  # Model load file name, "" doesn't load
 
     # Algorithm specific arguments
-    env_id: str = "crossing_mappo_team4"
+    env_id: str = "crossing_mappo"
     """the id of the environment"""
     map_size: int = 70
     """map_size"""
@@ -107,7 +113,7 @@ if __name__ == "__main__":
     args.num_iterations = args.total_timesteps // args.batch_size
     now = datetime.datetime.now()
     timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
-    run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{timestamp}"
+    run_name = f"{args.env_id}__size{args.map_size}__{args.n_agents}agents__{timestamp}"
     if args.checkpoints_path is not None:
         args.checkpoints_path = os.path.join(args.checkpoints_path, run_name)
 
@@ -140,7 +146,7 @@ if __name__ == "__main__":
     # env = battle_v4.env(render_mode='human')
     # env = battlefield.env(render_mode='human')
     rgb_env = crossing.env(map_size=args.map_size, n_red_agents=args.n_agents, render_mode='rgb_array')
-    # render_env = crossing.env(map_size=args.map_size, n_red_agents=args.n_agents, render_mode='human')
+    render_env = crossing.env(map_size=args.map_size, n_red_agents=args.n_agents, render_mode='human')
     env = rgb_env
     episodes = 0
     iteration = 0
@@ -159,11 +165,10 @@ if __name__ == "__main__":
     returns = {}
     """ setup agent buffer and initial observations """
     for agent_name in agent_names:
-        obs_space = env.observation_space(agent_name).shape
         # action_size = env.action_space(agent_name).n
         action_size = len(custom_actions)
-        actors[agent_name] = DecentActor(env, agent_name, args.n_hidden).to(device)
-        critics[agent_name] = CentralCritic(env, red_agents, args.n_hidden, 5*len(red_agents)).to(device)
+        actors[agent_name] = DecentActor(action_size, args.n_hidden).to(device)
+        critics[agent_name] = CentralCritic(args.n_hidden, 5*len(red_agents)).to(device)
         actor_optimizers[agent_name] = optim.Adam(actors[agent_name].parameters(), lr=args.learning_rate, eps=1e-5)
         critic_optimizers[agent_name] = optim.Adam(critics[agent_name].parameters(), lr=args.learning_rate, eps=1e-5)
         obs_space_shape_swapped = env.observation_space(agent_name).shape
@@ -177,7 +182,6 @@ if __name__ == "__main__":
             "values": torch.zeros(args.num_steps).to(device),
         }
         buffers[agent_name] = buffer
-        total_reward[agent_name] = 0
 
     if args.checkpoints_path is not None:
         print(f"Checkpoints path: {args.checkpoints_path}")
@@ -190,11 +194,6 @@ if __name__ == "__main__":
     start_time = time.time()
     while global_step < args.total_timesteps:
         print(f"====== iteration {iteration} ======")
-        # if args.render:
-        #     if iteration % args.render_freq == 0:
-        #         env = render_env
-        #     else:
-        env = rgb_env
         for agent_name in agent_names:
             total_reward[agent_name] = 0
             if args.anneal_lr:
@@ -205,18 +204,21 @@ if __name__ == "__main__":
         advantages = {}
         returns = {}
         while step < args.num_steps:
-            total_reward[red_agents[0]] = 0
+            for agent_name in agent_names:
+                total_reward[agent_name] = 0
+            if args.render:
+                if episodes % args.render_freq == 0:
+                    env_name = "render_env"
+                    env = render_env
+                else:
+                    env_name = "rgb_env"
+                    env = rgb_env
             env.reset()
-            frame_list = []  # For creating a gif
             for agent_name in env.agent_iter():
                 if step == args.num_steps:
                     for key in env.truncations:
                         env.truncations[key] = True
                     break
-                if args.render:
-                    if episodes % args.render_freq == 0:
-                        image = Image.fromarray(env.render())
-                        frame_list.append(image)
                 # skip blue agents
                 if "blue" in agent_name or "blue" in env.agent_selection:
                     observation, reward, termination, truncation, info = env.last()
@@ -235,8 +237,7 @@ if __name__ == "__main__":
                 obs_all_tensor = get_all_custom_obs(env, red_agents, device=device, r=args.observation_radius)
                 observation, reward, termination, truncation, info = env.last()
                 observation = get_custom_obs(observation, r=args.observation_radius)
-                old_rwd = reward
-                reward = get_custom_reward(env, args.distance_threshold)
+                reward = square_distance_reward(env, args.distance_threshold)
                 if reward > 2:
                     termination = True
                     for key in env.terminations:
@@ -266,21 +267,16 @@ if __name__ == "__main__":
                     writer.add_scalar(f"Charts/{agent_name}_total_rwd", total_reward[agent_name], global_step)
                     env.step(None)
                 else:
-                    env.step(int(action.cpu()))
-                    # env.step(do_nothing)
-                step += 1
-                global_step += 1
+                    env.step(custom_actions[int(action.cpu())])
+                if agent_name == red_agents[-1]:
+                    step += 1
+                    global_step += 1
             episodes += 1
             writer.add_scalar(f"Charts/episode", episodes, global_step)
             if args.render:
                 env.close()
-                env.reset()
-                if len(frame_list) > 0:
-                    frame_list[0].save(f'{args.checkpoints_path}/iter{iteration}_out.gif', save_all=True,
-                                       append_images=frame_list[1:], duration=5, loop=0)
 
         for agent_name in red_agents:
-            writer.add_scalar(f"Charts/{agent_name}_total_rwd", total_reward[agent_name], global_step)
             if len(env.terminations) < 2:
                 print("warning env.terminations dict less than 2", env.terminations)
                 terminal_or_truncated = int(True)
@@ -372,6 +368,69 @@ if __name__ == "__main__":
             writer.add_scalar(f"losses/{agent_name}_explained_variance", explained_var, global_step)
         print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar(f"Charts/SPS", int(global_step / (time.time() - start_time)), global_step)
+
+
+        # eval loop:
+        if iteration % args.eval_freq == 0:
+            env = rgb_env
+            frame_list = []  # For creating a gif
+            n_eval = args.n_eval
+            for agent_name in agent_names:
+                total_reward[agent_name] = 0
+            for _ in range(n_eval):
+                env.reset()
+                for agent_name in env.agent_iter():
+                    if args.capture_video:
+                        image = Image.fromarray(env.render())
+                        frame_list.append(image)
+                    # skip blue agents
+                    if "blue" in agent_name or "blue" in env.agent_selection:
+                        observation, reward, termination, truncation, info = env.last()
+                        if termination or truncation:
+                            # print(agent_name, step, termination, truncation, info)
+                            env.step(None)
+                            continue
+                        else:
+                            env.step(do_nothing)
+                            continue
+                    observation, reward, termination, truncation, info = env.last()
+                    # print(agent_name, step, termination, truncation, info)
+                    observation = get_custom_obs(observation, r=args.observation_radius)
+                    old_rwd = reward
+                    try:
+                        state = env.state()
+                    except:
+                        print("error in retrieving state, resetting state...")
+                        env.reset()
+                    reward = square_distance_reward(env, args.distance_threshold)
+                    total_reward[agent_name] += reward
+                    if reward > 2:
+                        termination = True
+                        for key in env.terminations:
+                            env.terminations[key] = True
+                        for key in env.truncations:
+                            env.truncations[key] = False
+                    obs_agent = torch.Tensor(observation).to(device)
+                    obs_agent = torch.swapaxes(obs_agent, 0, 2)
+
+                    # ALGO LOGIC: action logic
+                    with torch.no_grad():
+                        action = actors[agent_name].get_greedy_action(obs_agent.unsqueeze(0))
+
+                    if termination or truncation:
+                        env.step(None)
+                    else:
+                        env.step(custom_actions[int(action.cpu())])
+            for agent_name in red_agents:
+                print(f"episode {episodes} eval average reward over {n_eval} episodes: {total_reward[agent_name]/n_eval:.4f}")
+                writer.add_scalar(f"Charts/{agent_name}_eval_avg_rwd_{n_eval}", total_reward[agent_name]/n_eval, global_step)
+            if args.render:
+                if len(frame_list) > 0:
+                    frame_list[0].save(f'{args.checkpoints_path}/iter{iteration}_out.gif', save_all=True,
+                                       append_images=frame_list[1:], duration=5, loop=0)
+            env.close()
+            env.reset()
+
         iteration += 1
         step = 0
 
