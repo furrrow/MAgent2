@@ -38,6 +38,17 @@ custom_actions = {
     7: 10,          # down
     8: 11,          # down_right
 }
+arrow_actions = {
+    0: (-1, 1),  # up_left
+    1: (0, 1),  # up
+    2: (1, 1),  # up_right
+    3: (-1, 0),  # left
+    4: (0, 0),  # nothing
+    5: (1, 0),  # right
+    6: (-1, -1),  # down_left
+    7: (0, -1),  # down
+    8: (1, -1),  # down_right
+}
 
 obs_keys = {
     0: "obstacle_map",

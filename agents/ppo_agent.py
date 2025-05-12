@@ -53,7 +53,8 @@ class IppoAgent(nn.Module):
 
     def get_value(self, x):
         batch_size = x.shape[0]
-        return self.critic(self.network(x.reshape(batch_size, -1)))
+        hidden = self.network(x)
+        return self.critic(hidden.reshape(batch_size, -1))
 
     def get_action_and_value(self, x, action=None):
         batch_size = x.shape[0]
@@ -67,7 +68,7 @@ class IppoAgent(nn.Module):
     def get_greedy_action(self, x):
         hidden = self.network(x)
         logits = self.actor(hidden)
-        action = torch.argmax(logits)
+        action = torch.argmax(logits, dim=1)
         return action
 
 class CentralCritic(nn.Module):
