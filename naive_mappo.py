@@ -41,15 +41,15 @@ class Args:
     """the entity (team) of wandb's project"""
 
     render: bool = True
-    render_freq: int = 10
+    render_freq: int = 50
     """ how often to render training runs """
-    eval_freq: int = 10
+    eval_freq: int = 50
     n_eval: int = 5
     """ how many loop to run per eval"""
     capture_video: bool = False
     """whether to capture videos of the agent performances (check out `videos` folder)"""
     checkpoints_path: str = "./saves"  # Save path
-    save_freq: int = 10
+    save_freq: int = 50
     load_model: str = ""  # Model load file name, "" doesn't load
 
     # Algorithm specific arguments

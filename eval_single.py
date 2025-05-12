@@ -154,7 +154,7 @@ if __name__ == "__main__":
         obs_space = env.observation_space(agent_name).shape
         # action_size = env.action_space(agent_name).n
         action_size = len(custom_actions)
-        agents[agent_name] = IppoAgent(obs_space, action_size, config['n_hidden'], channel_last=True).to(device)
+        agents[agent_name] = IppoAgent(action_size, config['n_hidden'], channel_last=True).to(device)
         obs_space_shape_swapped = env.observation_space(agent_name).shape
         obs_space_shape_swapped = list(obs_space_shape_swapped)[::-1]
         total_reward[agent_name] = 0
