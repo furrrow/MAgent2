@@ -165,11 +165,10 @@ if __name__ == "__main__":
     returns = {}
     """ setup agent buffer and initial observations """
     for agent_name in agent_names:
-        obs_space = env.observation_space(agent_name).shape
         # action_size = env.action_space(agent_name).n
         action_size = len(custom_actions)
-        actors[agent_name] = DecentActor(obs_space, action_size, args.n_hidden).to(device)
-        critics[agent_name] = CentralCritic(obs_space, action_size, red_agents, args.n_hidden, 5*len(red_agents)).to(device)
+        actors[agent_name] = DecentActor(action_size, args.n_hidden).to(device)
+        critics[agent_name] = CentralCritic(args.n_hidden, 5*len(red_agents)).to(device)
         actor_optimizers[agent_name] = optim.Adam(actors[agent_name].parameters(), lr=args.learning_rate, eps=1e-5)
         critic_optimizers[agent_name] = optim.Adam(critics[agent_name].parameters(), lr=args.learning_rate, eps=1e-5)
         obs_space_shape_swapped = env.observation_space(agent_name).shape
