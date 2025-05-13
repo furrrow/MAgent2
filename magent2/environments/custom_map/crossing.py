@@ -285,11 +285,17 @@ class _parallel_env(magent_parallel_env, EzPickle):
         env.add_walls(pos=wall_pos, method="custom")
 
         n_l = self.n_red_agents
-        side = int(math.sqrt(n_l)) * 2
+        # side = int(math.sqrt(n_l)) * 2
+        side = n_l
         pos = []
-        for x in range(width // 2 - l_gap - side, width // 2 - l_gap - side + side, 2):
-            for y in range((height - side) // 2, (height - side) // 2 + side, 2):
-                pos.append([x, y, 0])
+        while len(pos) < n_l:
+            x = np.random.choice(range(width // 2 - l_gap - side, width // 2 - l_gap - side + side, 2))
+            y = np.random.choice(range((height - side) // 2, (height - side) // 2 + side, 2))
+            new_pos = [x, y, 0]
+            if new_pos not in pos:
+                pos.append(new_pos)
+            else:
+                continue
 
         for x, y, _ in pos:
             if not (0 < x < width - 1 and 0 < y < height - 1):

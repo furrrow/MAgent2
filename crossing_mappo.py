@@ -31,16 +31,16 @@ class Args:
     """seed of the experiment"""
     torch_deterministic: bool = True
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
-    cuda: bool = True
+    cuda: bool = False
     """if toggled, cuda will be enabled by default"""
-    use_wandb: bool = True
+    use_wandb: bool = False
     """if toggled, this experiment will be tracked with Weights and Biases"""
     wandb_project_name: str = "RL"
     """the wandb's project name"""
     wandb_entity: str = "jianyu34-university-of-maryland"
     """the entity (team) of wandb's project"""
 
-    render: bool = False
+    render: bool = True
     render_freq: int = 50
     """ how often to render training runs """
     eval_freq: int = 50
@@ -57,7 +57,7 @@ class Args:
     """the id of the environment"""
     map_size: int = 70
     """map_size"""
-    n_agents: int = 4
+    n_agents: int = 6
     """the number of red agents in the map"""
     distance_threshold: int = 3
     """how close does the red agent need to get to the blue agent to count as success"""
@@ -65,7 +65,7 @@ class Args:
     """observation radius for the agent"""
     total_timesteps: int = 5_000_000
     """total timesteps of the experiments"""
-    learning_rate: float = 3e-4
+    learning_rate: float = 5e-4
     """the learning rate of the optimizer"""
     n_hidden: int = 32
     """number of hidden layers in the network"""

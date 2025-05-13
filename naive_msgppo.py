@@ -40,7 +40,7 @@ class Args:
     wandb_entity: str = "jianyu34-university-of-maryland"
     """the entity (team) of wandb's project"""
 
-    render: bool = True
+    render: bool = False
     render_freq: int = 50
     """ how often to render training runs """
     eval_freq: int = 50
@@ -400,10 +400,10 @@ if __name__ == "__main__":
                 total_reward[i_name] = 0
                 send_dict[i_name] = [0.0] * len(red_agents)
                 recv_dict[i_name] = [0.0] * len(red_agents)
-            for _ in range(n_eval):
+            for n_e in range(n_eval):
                 env.reset()
                 for agent_name in env.agent_iter():
-                    if args.capture_video:
+                    if args.capture_video and n_e == 0: # only render first loop
                         image = Image.fromarray(env.render())
                         frame_list.append(image)
                     # skip blue agents
